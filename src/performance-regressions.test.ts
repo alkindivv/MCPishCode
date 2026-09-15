@@ -261,12 +261,15 @@ try {
   });
 } finally { await rm(temp, { recursive: true, force: true }); }
 
-await test("source wiring: all widgets collapsed, app-only fetch, no invalid optional Zod max chain", () => {
+await test("source wiring: widgets are collapsed and legacy template remains readable", () => {
   const server = readFileSync(join(process.cwd(), "src", "server.ts"), "utf8");
   const ui = readFileSync(join(process.cwd(), "src", "ui", "workspace-app.tsx"), "utf8");
   assert.match(server, /visibility: \["app"\]/);
   assert.match(server, /await reviewCheckpoints\.initializeWorkspace/);
   assert.doesNotMatch(server, /\.optional\(\)\s*\.max\(budgets/);
+  assert.match(server, /if \(!shouldAttachWidget\(config\.widgets, kind\)\) return \{ _meta: \{\} \}/);
+  assert.match(server, /function legacyWidgetDisabledHtml\(\)/);
+  assert.match(server, /text: widgetsEnabled \? workspaceAppHtml\(config\) : legacyWidgetDisabledHtml\(\)/);
   assert.match(ui, /expanded = false; \/\/ Never mount/);
   assert.match(ui, /app\.callServerTool/);
   assert.match(ui, /targetCard !== card/);

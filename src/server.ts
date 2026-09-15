@@ -446,6 +446,16 @@ function assetUrl(baseUrl: string, assetPath: string): string {
   return `${baseUrl}/${assetPath.replace(/^\/+/, "")}`;
 }
 
+function legacyWidgetDisabledHtml(): string {
+  // ChatGPT may retain a previous template pointer after a metadata change. Keep
+  // that pointer readable without re-enabling widgets on current tool descriptors.
+  return `<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /></head>
+  <body style="margin:0;height:0;overflow:hidden" aria-hidden="true"></body>
+</html>`;
+}
+
 function workspaceAppHtml(config: ServerConfig): string {
   const baseUrl = assetBaseUrl(config);
   const entry = getWorkspaceAppManifestEntry();
@@ -769,7 +779,10 @@ function createMcpServer(
     },
   );
 
-  if (config.widgets !== "off") registerAppResource(
+  // Keep the former URI readable for ChatGPT connections that retained the
+  // template pointer before widgets were disabled. Current tool descriptors
+  // remain widget-free in off mode, so this does not re-enable auto previews.
+  registerAppResource(
     server,
     "MCPishCode Diff Card",
     WORKSPACE_APP_URI,
@@ -782,13 +795,14 @@ function createMcpServer(
       },
     },
     async () => {
-      await assertWorkspaceAppAssets();
+      const widgetsEnabled = config.widgets !== "off";
+      if (widgetsEnabled) await assertWorkspaceAppAssets();
       return {
         contents: [
           {
             uri: WORKSPACE_APP_URI,
             mimeType: RESOURCE_MIME_TYPE,
-            text: workspaceAppHtml(config),
+            text: widgetsEnabled ? workspaceAppHtml(config) : legacyWidgetDisabledHtml(),
             _meta: {
               ui: {
                 csp: appCsp(config),
