@@ -122,3 +122,22 @@ workspace-relative output path, byte count, hash, duration, and status metadata.
 references, native file IDs, bearer credentials, presigned URLs, host paths,
 temporary paths, and base64 chunks are never included in tool logs or tool
 results.
+
+## Performance patch boundaries
+
+Path checks now compare lexical containment and existing-ancestor canonical paths
+so ordinary symlink escapes fail closed. They are not a kernel sandbox and cannot
+eliminate all time-of-check/time-of-use races. Shell commands and subagents retain
+the operating-system permissions of the server user. Use a restricted account or
+container for untrusted work.
+
+Compact text and preview caches are memory-only and workspace-scoped. The default
+16 MiB budget counts serialized retained bytes, not total JavaScript heap usage.
+Outputs are still transmitted to the connected client when read. `_meta` is not a
+secret store: widget-only data is visible to the widget/user, though not supplied
+as model-visible tool content by the documented host contract.
+
+Review snapshots use private Git tree refs; shutdown removes this process's refs,
+not the underlying Git objects immediately. Do not assume deleted refs erase
+sensitive file history. The archive contains no new authentication bypass, no
+change to OAuth credential files, and no remote deployment action.

@@ -223,7 +223,7 @@ If a skill appears in `open_workspace`, the model must read that skill's
 
 ## Review Card Does Not Appear
 
-Per-tool widget cards are enabled by default with:
+Per-tool widget cards are disabled by default in this audit build. Opt in with:
 
 ```bash
 MCPISHCODE_WIDGETS=full
@@ -232,3 +232,17 @@ MCPISHCODE_WIDGETS=full
 The aggregate `show_changes` tool is only exposed with
 `MCPISHCODE_WIDGETS=changes`. Plain MCP clients may ignore ChatGPT Apps widget
 metadata and only show text results.
+
+## Output is shorter or a preview expired
+
+Compact output is intentional. Follow `outputId` using `read_output`; do not
+repeat writes. Preview/output retention defaults to 15 minutes and may evict
+entries earlier under its size budget. A restart clears the in-memory cache.
+See [Performance and migration](performance.md) for budgets and compatibility.
+
+## Local patch appears to have no effect
+
+Launch the built checkout with `node dist/cli.js serve`, not the unchanged npm
+release. Existing environment settings override the performance env file. Restart
+the local server and refresh the connector's tool definitions after changing modes.
+An old chat still contains its previous large tool results.

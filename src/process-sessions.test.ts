@@ -213,5 +213,5 @@ try {
     assert.match(resizedPty.output, /columns:120/);
   }
 } finally {
-  manager.shutdown();
+  await manager.shutdown();
 }

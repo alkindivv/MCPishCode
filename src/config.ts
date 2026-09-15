@@ -5,6 +5,8 @@ import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
 import type { OAuthConfig } from "./oauth-provider.js";
 import { mcpishcodeAgentsDir, mcpishcodeSkillsDir, loadDevspaceFiles } from "./user-config.js";
 
+import { loadPerformanceConfig, type PerformanceConfig } from "./performance-config.js";
+
 export type ToolMode = "minimal" | "full" | "codex";
 export type WidgetMode = "off" | "changes" | "full";
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
@@ -20,6 +22,7 @@ export interface ServerConfig {
   publicBaseUrl: string;
   toolMode: ToolMode;
   widgets: WidgetMode;
+  performance?: PerformanceConfig;
   stateDir: string;
   worktreeRoot: string;
   artifactsEnabled: boolean;
@@ -156,8 +159,9 @@ function parseLoggingConfig(env: NodeJS.ProcessEnv): LoggingConfig {
 }
 
 function parseWidgetMode(value: string | undefined): WidgetMode {
-  if (!value || value === "full") return "full";
-  if (value === "off" || value === "changes") return value;
+  if (!value || value === "off") return "off";
+  if (value === "full") return "full";
+  if (value === "changes") return value;
 
   throw new Error(`Invalid MCPISHCODE_WIDGETS: ${value}`);
 }
@@ -232,6 +236,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     publicBaseUrl,
     toolMode: parseToolMode(env),
     widgets: parseWidgetMode(env.MCPISHCODE_WIDGETS),
+    performance: loadPerformanceConfig(env),
     stateDir: resolve(expandHomePath(env.MCPISHCODE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),
     worktreeRoot: resolve(expandHomePath(env.MCPISHCODE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
     artifactsEnabled:

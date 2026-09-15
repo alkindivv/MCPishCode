@@ -17,6 +17,7 @@ import {
   payloadText,
   type HostContext,
   type ToolName,
+  type ToolPayload,
   type ToolResultCard,
 } from "./card-types.js";
 import { renderIcon, toolIcons } from "./icons.js";
@@ -47,6 +48,7 @@ let reviewFilesExpanded = false;
 let errorMessage: string | null = null;
 let currentPayload: MountedPayload | null = null;
 let currentPayloadContainer: HTMLElement | null = null;
+const previewRequests = new WeakMap<ToolResultCard, Promise<void>>();
 
 const maybeAppRoot = document.querySelector<HTMLElement>("#app");
 
@@ -85,7 +87,7 @@ async function boot(): Promise<void> {
 
     const nextCard = { ...structured, tool };
     card = nextCard;
-    expanded = isReviewTool(tool) && isExpandableCard(nextCard);
+    expanded = false; // Never mount React/diff highlighting until the user expands the card.
     reviewFilesExpanded = false;
     errorMessage = null;
     render();
@@ -215,10 +217,23 @@ function renderEmpty(message: string, tone: "muted" | "error" = "muted"): void {
   appRoot.replaceChildren(main);
 }
 
+// An async import yields to other render calls; re-read mutable state through an accessor.
+function getMountedPayload(): MountedPayload | null { return currentPayload; }
+
 async function renderPayloadIfNeeded(): Promise<void> {
   if (!card || !currentPayloadContainer || !expanded) return;
 
   const target = currentPayloadContainer;
+  const targetCard = card;
+  if (targetCard.payloadRef && !targetCard.payload) {
+    renderStatus(target, "Loading preview...");
+    await loadPreview(targetCard);
+    if (target !== currentPayloadContainer || targetCard !== card || !expanded) return;
+  }
+  if (targetCard.payload?.message) {
+    renderStatus(target, targetCard.payload.message);
+    return;
+  }
 
   if (errorMessage) {
     renderStatus(target, errorMessage, "error");
@@ -240,7 +255,9 @@ async function renderPayloadIfNeeded(): Promise<void> {
 
     try {
       const { mountHeavyPayload } = await import("./heavy-payload.js");
-      if (target !== currentPayloadContainer || !expanded || !card) return;
+      if (target !== currentPayloadContainer || targetCard !== card || !expanded) return;
+      const mountedAfterLoad = getMountedPayload();
+      if (mountedAfterLoad) { mountedAfterLoad.update({ card, hostContext, errorMessage }); return; }
 
       setPayloadLoading(target, false);
       currentPayload = mountHeavyPayload(target, {
@@ -273,15 +290,16 @@ async function renderPayloadIfNeeded(): Promise<void> {
 
     renderStatus(target, isReviewTool(card.tool) ? "Loading review..." : "Loading diff...");
 
-    const { mountReviewPayload } = await import("./review-payload.js");
-    if (target !== currentPayloadContainer || !card) return;
-
-    currentPayload = mountReviewPayload(target, {
-      card,
-      hostContext,
-      errorMessage,
-      visibleFileCount,
-    });
+    try {
+      const { mountReviewPayload } = await import("./review-payload.js");
+      if (target !== currentPayloadContainer || targetCard !== card || !expanded) return;
+      const mountedAfterLoad = getMountedPayload();
+      if (mountedAfterLoad) { mountedAfterLoad.update({ card, hostContext, errorMessage, visibleFileCount }); return; }
+      currentPayload = mountReviewPayload(target, { card, hostContext, errorMessage, visibleFileCount });
+    } catch (error) {
+      if (target !== currentPayloadContainer || targetCard !== card || !expanded) return;
+      renderStatus(target, error instanceof Error ? error.message : "Unable to load diff preview.", "error");
+    }
     return;
   }
 
@@ -292,6 +310,28 @@ async function renderPayloadIfNeeded(): Promise<void> {
   }
 
   renderPrePayload(target, text, card.tool);
+}
+
+async function loadPreview(target: ToolResultCard): Promise<void> {
+  const existing = previewRequests.get(target);
+  if (existing) return existing;
+  const request = (async () => {
+    try {
+      if (!app || !target.workspaceId || !target.payloadRef) throw new Error("Preview is unavailable.");
+      const result = await app.callServerTool({
+        name: "get_tool_preview",
+        arguments: { workspaceId: target.workspaceId, outputId: target.payloadRef },
+      });
+      if (result.isError) throw new Error("Preview expired or was evicted. Inspect the source with a bounded read.");
+      const payload = result._meta?.payload;
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Invalid preview response.");
+      target.payload = payload as ToolPayload;
+    } catch (error) {
+      target.payload = { message: error instanceof Error ? error.message : "Preview is unavailable." };
+    }
+  })();
+  previewRequests.set(target, request);
+  return request;
 }
 
 function shouldUseHeavyPayload(card: ToolResultCard): boolean {

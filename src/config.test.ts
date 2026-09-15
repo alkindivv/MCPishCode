@@ -12,7 +12,7 @@ const baseEnv = {
   MCPISHCODE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
 };
 
-assert.equal(loadConfig(baseEnv).widgets, "full");
+assert.equal(loadConfig(baseEnv).widgets, "off");
 assert.equal(loadConfig({ ...baseEnv, MCPISHCODE_WIDGETS: "changes" }).widgets, "changes");
 assert.equal(loadConfig({ ...baseEnv, MCPISHCODE_WIDGETS: "full" }).widgets, "full");
 assert.equal(loadConfig({ ...baseEnv, MCPISHCODE_WIDGETS: "off" }).widgets, "off");

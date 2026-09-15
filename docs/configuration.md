@@ -115,9 +115,9 @@ sessions.
 
 | Value | Behavior |
 | --- | --- |
-| `full` | Default. Widget UI is attached to exposed workspace, file, edit, and shell tools. |
+| `full` | Opt-in. Widget UI is attached to exposed workspace, file, edit, and shell tools. |
 | `changes` | Enables the aggregate `show_changes` tool and attaches widget UI to `open_workspace` and `show_changes`. |
-| `off` | Disables widget UI. |
+| `off` | Default in this audit build. Disables widget resources and result-card metadata. |
 
 ## Skills
 
@@ -198,3 +198,12 @@ npx @alkindivv/mcpishcode serve
 
 The environment assignments must be part of the same command invocation, or
 exported first.
+
+## Output and resource budgets (audit build)
+
+See [Performance and migration](performance.md) and `.env.performance.example`.
+`MCPISHCODE_OUTPUT_MODE=compact` is the default. Text appears in `content` once;
+`structuredContent.result` contains `ok` or `error`, not a duplicate transcript.
+`read_output` is available in all tool modes. Optional `get_tool_preview` is
+app-only and is absent with widgets off. All widget cards start collapsed.
+The new budgets are environment settings; `.env` files are not automatically loaded.

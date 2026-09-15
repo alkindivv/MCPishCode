@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { access, realpath } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
@@ -23,6 +23,9 @@ import {
   registerArtifactTools,
 } from "./artifact-tools.js";
 import { loadConfig, type ServerConfig, type WidgetMode } from "./config.js";
+import { performanceConfig } from "./performance-config.js";
+import { OutputCache } from "./output-cache.js";
+import { ToolResultPolicy, type ToolResultInput } from "./output-policy.js";
 import {
   createOpenAIIncomingArtifactAdapter,
   type IncomingArtifactAdapter,
@@ -64,8 +67,7 @@ import {
 type Transport = StreamableHTTPServerTransport;
 // MCP clients can reconnect without closing the previous transport. Bound stale
 // session retention so abandoned MCP servers do not accumulate for the life of the process.
-const MCP_SESSION_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
-const MCP_SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
+const MCP_SESSION_CLEANUP_INTERVAL_MS = 60 * 1_000;
 const WORKSPACE_APP_URI = "ui://mcpishcode/workspace-app.html";
 const WORKSPACE_APP_MANIFEST_ENTRY = "workspace-app.html";
 const WRITE_TOOL_ANNOTATIONS = {
@@ -237,8 +239,10 @@ function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
     result: z
       .string()
       .describe(
-        "Model-readable result text for follow-up reasoning and plain MCP hosts.",
+        "Short status; the detailed, model-readable output is in content (not duplicated here).",
       ),
+    outputId: z.string().optional().describe("Use read_output to page through retained text."),
+    outputTruncated: z.boolean().optional(),
     ...extra,
   };
 }
@@ -252,6 +256,7 @@ const workspaceSkillOutputSchema = z.object({
 const workspaceAgentsFileOutputSchema = z.object({
   path: z.string(),
   content: z.string(),
+  needsRead: z.boolean().optional(),
 });
 
 const workspaceLocalAgentOutputSchema = z.object({
@@ -419,8 +424,11 @@ function uiManifestUrl(): URL {
   return new URL("../dist/ui/.vite/manifest.json", import.meta.url);
 }
 
+let cachedWorkspaceAppManifest: WorkspaceAppManifest | undefined;
 function readWorkspaceAppManifest(): WorkspaceAppManifest {
-  return JSON.parse(readFileSync(uiManifestUrl(), "utf8")) as WorkspaceAppManifest;
+  // Production assets are immutable; dev-server restarts on rebuild.
+  cachedWorkspaceAppManifest ??= JSON.parse(readFileSync(uiManifestUrl(), "utf8")) as WorkspaceAppManifest;
+  return cachedWorkspaceAppManifest;
 }
 
 function getWorkspaceAppManifestEntry(): WorkspaceAppManifestEntry {
@@ -523,11 +531,12 @@ function processToolResponse(
   workspaceId: string,
   snapshot: ProcessSnapshot,
   summary: Record<string, unknown>,
+  finish: FinalizeToolResult,
 ) {
   const result = processResult(snapshot);
   const content = [textBlock(result)];
   const outputSummary = textSummary(snapshot.output ? [textBlock(snapshot.output)] : []);
-  return {
+  return finish({
     content,
     _meta: {
       tool,
@@ -546,7 +555,7 @@ function processToolResponse(
       wallTimeMs: snapshot.wallTimeMs,
       outputTruncated: snapshot.outputTruncated,
     },
-  };
+  }, workspaceId);
 }
 
 function registerCodexProcessTools(
@@ -554,7 +563,9 @@ function registerCodexProcessTools(
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
   processSessions: ProcessSessionManager,
+  finish: FinalizeToolResult,
 ): void {
+  const budgets = performanceConfig(config);
   registerAppTool(
     server,
     "exec_command",
@@ -588,7 +599,7 @@ function registerCodexProcessTools(
           .positive()
           .max(100_000)
           .optional()
-          .describe("Approximate output token budget. Defaults to 10000."),
+          .describe("Approximate output token budget; server response budgets still apply. Defaults to 2000."),
       },
       outputSchema: processOutputSchema(),
       ...toolWidgetDescriptorMeta(config, "shell"),
@@ -607,7 +618,7 @@ function registerCodexProcessTools(
         columns,
         rows,
         yieldTimeMs,
-        maxOutputTokens,
+        maxOutputTokens: maxOutputTokens ?? budgets.defaultProcessOutputTokens,
       });
 
       logToolCall(config, {
@@ -626,7 +637,7 @@ function registerCodexProcessTools(
         running: snapshot.running,
         exitCode: snapshot.exitCode,
         wallTimeMs: snapshot.wallTimeMs,
-      });
+      }, finish);
     },
   );
 
@@ -656,7 +667,7 @@ function registerCodexProcessTools(
           .positive()
           .max(100_000)
           .optional()
-          .describe("Approximate output token budget. Defaults to 10000."),
+          .describe("Approximate output token budget; server response budgets still apply. Defaults to 2000."),
       },
       outputSchema: processOutputSchema(),
       ...toolWidgetDescriptorMeta(config, "shell"),
@@ -672,7 +683,7 @@ function registerCodexProcessTools(
         columns,
         rows,
         yieldTimeMs,
-        maxOutputTokens,
+        maxOutputTokens: maxOutputTokens ?? budgets.defaultProcessOutputTokens,
       });
 
       logToolCall(config, {
@@ -688,9 +699,50 @@ function registerCodexProcessTools(
         running: snapshot.running,
         exitCode: snapshot.exitCode,
         wallTimeMs: snapshot.wallTimeMs,
-      });
+      }, finish);
     },
   );
+}
+
+
+type FinalizeToolResult = (result: ToolResultInput, workspaceId: string) => ToolResultInput;
+function createResultFinalizer(config: ServerConfig, policy: ToolResultPolicy): FinalizeToolResult {
+  return (result, workspaceId) => {
+    const tool = result._meta?.tool;
+    const kind: ToolWidgetKind = tool === "open_workspace" ? "workspace" : tool === "show_changes" ? "show_changes" : "read";
+    return policy.format(result, { workspaceId, widget: shouldAttachWidget(config.widgets, kind) });
+  };
+}
+
+function registerOutputTools(server: McpServer, config: ServerConfig, workspaces: WorkspaceRegistry, policy: ToolResultPolicy): void {
+  registerAppTool(server, "read_output", {
+    title: "Read retained output",
+    description: "Read a bounded page of text retained from a truncated tool result. Reuse outputId and nextOffset; do not rerun commands or writes to recover output. Cache entries expire or may be evicted. Only the text originally returned by the upstream tool is retained.",
+    inputSchema: {
+      workspaceId: z.string(), outputId: z.string(),
+      offset: z.number().int().nonnegative().optional().describe("Zero-based character offset; use nextOffset verbatim."),
+      limit: z.number().int().min(2).max(policy.config.maxOutputCharacters).optional(),
+    },
+    outputSchema: { outputId: z.string(), offset: z.number(), nextOffset: z.number().optional(), totalCharacters: z.number() },
+    _meta: {}, annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async ({ workspaceId, outputId, offset, limit }) => {
+    workspaces.getWorkspace(workspaceId);
+    const page = policy.cache.read(workspaceId, outputId, offset ?? 0, limit ?? policy.config.maxOutputCharacters);
+    return { content: [textBlock(page.text)], structuredContent: { outputId, offset: page.offset, nextOffset: page.nextOffset, totalCharacters: page.totalCharacters } };
+  });
+  if (config.widgets === "off") return;
+  registerAppTool(server, "get_tool_preview", {
+    title: "Load tool preview",
+    description: "Load a retained UI preview only after the user expands a card. Not a model-facing tool.",
+    inputSchema: { workspaceId: z.string(), outputId: z.string() },
+    outputSchema: { result: z.string() },
+    _meta: { ui: { visibility: ["app"] } },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async ({ workspaceId, outputId }) => {
+    workspaces.getWorkspace(workspaceId);
+    const payload: unknown = JSON.parse(policy.cache.get(workspaceId, outputId, "preview"));
+    return { content: [textBlock("Preview loaded.")], structuredContent: { result: "ok" }, _meta: { payload } };
+  });
 }
 
 function createMcpServer(
@@ -700,7 +752,10 @@ function createMcpServer(
   processSessions: ProcessSessionManager,
   localAgentProviders: LocalAgentProviderAvailability[],
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
+  resultPolicy: ToolResultPolicy,
 ): McpServer {
+  const budgets = performanceConfig(config);
+  const finish = createResultFinalizer(config, resultPolicy);
   const server = new McpServer(
     {
       name: "mcpishcode",
@@ -714,7 +769,7 @@ function createMcpServer(
     },
   );
 
-  registerAppResource(
+  if (config.widgets !== "off") registerAppResource(
     server,
     "MCPishCode Diff Card",
     WORKSPACE_APP_URI,
@@ -751,7 +806,7 @@ function createMcpServer(
     {
       title: "Open workspace",
       description:
-        "Open a local project directory as a coding workspace. Call this once per project folder or worktree before reading, editing, searching, writing, showing changes, or running commands. Reuse the returned workspaceId for later calls in the same folder; do not call open_workspace again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. By default this opens the actual checkout; set mode=\"worktree\" when the user asks for an isolated or parallel coding session. Returns a workspaceId, loaded root project instructions, and nested instruction file paths the model should read before working in those directories.",
+        "Open a local project directory as a coding workspace. Call this once per project folder or worktree before reading, editing, searching, writing, showing changes, or running commands. Reuse the returned workspaceId for later calls in the same folder; do not call open_workspace again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. By default this opens the actual checkout; set mode=\"worktree\" when the user asks for an isolated or parallel coding session. Returns a workspaceId, root instruction paths (read them before working; contents are on demand in compact mode), and nested instruction file paths the model should read before working in those directories.",
       inputSchema: {
         path: z
           .string()
@@ -791,15 +846,19 @@ function createMcpServer(
         agents: z.array(workspaceLocalAgentOutputSchema),
         skillDiagnostics: z.array(z.unknown()),
         instruction: z.string(),
+        contextTruncated: z.boolean().optional(),
+        contextOutputId: z.string().optional(),
+        contextCounts: z.record(z.string(), z.number()).optional(),
+        contextDiagnostics: z.array(z.string()).optional(),
       },
       ...toolWidgetDescriptorMeta(config, "workspace"),
       annotations: { readOnlyHint: true },
     },
     async ({ path, mode, baseRef }) => {
       const startedAt = performance.now();
-      const { workspace, agentsFiles, availableAgentsFiles } = await workspaces.openWorkspace({ path, mode, baseRef });
+      const { workspace, agentsFiles, availableAgentsFiles, contextDiagnostics } = await workspaces.openWorkspace({ path, mode, baseRef });
       if (config.widgets === "changes") {
-        void reviewCheckpoints.initializeWorkspace({
+        await reviewCheckpoints.initializeWorkspace({
           workspaceId: workspace.id,
           root: workspace.root,
         });
@@ -868,8 +927,10 @@ function createMcpServer(
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return {
-        content: resultContent,
+      return finish({
+        content: budgets.outputMode === "compact"
+          ? [textBlock(`Opened workspace ${workspace.id}. Root: ${workspace.root}. Read the advertised root instruction paths before working; instruction contents are loaded on demand.`)]
+          : resultContent,
         _meta: {
           tool: "open_workspace",
           card: {
@@ -893,6 +954,7 @@ function createMcpServer(
           mode: workspace.mode,
           sourceRoot: workspace.sourceRoot,
           worktree: workspace.worktree,
+          contextDiagnostics,
           agentsFiles: loadedAgentsFiles,
           availableAgentsFiles: availableAgentsFileOutputs,
           skills: visibleSkills,
@@ -901,7 +963,7 @@ function createMcpServer(
           skillDiagnostics: workspace.skillDiagnostics,
           instruction,
         },
-      };
+      }, workspace.id);
     },
   );
 
@@ -928,7 +990,7 @@ function createMcpServer(
           .string()
           .describe(
             config.skillsEnabled
-              ? "File path to read, relative to the workspace root. May also be an advertised skill path from open_workspace skills."
+              ? "File path relative to the workspace root, or an exact advertised global instruction or skill path from open_workspace."
               : "File path to read, relative to the workspace root.",
           ),
         offset: z
@@ -941,8 +1003,9 @@ function createMcpServer(
           .number()
           .int()
           .positive()
+          .max(budgets.maxReadLines)
           .optional()
-          .describe("Maximum number of lines to read."),
+          .describe(`Maximum lines to read. Defaults to ${budgets.defaultReadLines}; server text budget also applies.`),
       },
       outputSchema: resultOutputSchema(),
       ...toolWidgetDescriptorMeta(config, "read"),
@@ -953,7 +1016,7 @@ function createMcpServer(
       const workspace = workspaces.getWorkspace(workspaceId);
       const readPath = workspaces.resolveReadPath(workspace, input.path);
       const response = await readFileTool(
-        { ...input, path: readPath.absolutePath },
+        { ...input, limit: Math.min(input.limit ?? budgets.defaultReadLines, budgets.maxReadLines), path: readPath.absolutePath },
         {
           cwd: workspace.root,
           root: workspace.root,
@@ -967,14 +1030,14 @@ function createMcpServer(
           workspaceId,
           path: input.path,
         }, response.content, startedAt);
-        return response;
+        return finish(response, workspaceId);
       }
       workspaces.markReadPathLoaded(workspace, readPath);
 
       const summary = {
         ...textSummary(response.content),
         offset: input.offset ?? 1,
-        limited: input.limit !== undefined,
+        limited: true,
       };
       logToolCall(config, {
         tool: toolNames.read,
@@ -984,7 +1047,7 @@ function createMcpServer(
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return {
+      return finish({
         ...response,
         _meta: {
           tool: toolNames.read,
@@ -998,7 +1061,7 @@ function createMcpServer(
         structuredContent: {
           result: contentText(response.content),
         },
-      };
+      }, workspaceId);
     },
   );
 
@@ -1026,7 +1089,11 @@ function createMcpServer(
     async ({ workspaceId, ...input }) => {
       const startedAt = performance.now();
       const workspace = workspaces.getWorkspace(workspaceId);
-      workspaces.resolvePath(workspace, input.path);
+      const absoluteWritePath = workspaces.resolvePath(workspace, input.path);
+      // Avoid presenting an overwrite as a newly-created file in full-widget mode.
+      const existed = shouldAttachWidget(config.widgets, "write")
+        ? await stat(absoluteWritePath).then(() => true, (error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return false; throw error; })
+        : true;
       const response = await writeFileTool(input, {
         cwd: workspace.root,
         root: workspace.root,
@@ -1038,10 +1105,11 @@ function createMcpServer(
           workspaceId,
           path: input.path,
         }, response.content, startedAt);
-        return response;
+        return finish(response, workspaceId);
       }
 
-      const patch = newFilePatch(input.path, input.content);
+      const patch = !existed && shouldAttachWidget(config.widgets, "write") && input.content.length <= budgets.maxPreviewCharacters
+        ? newFilePatch(input.path, input.content) : undefined;
       const stats = countDiffStats(patch);
       const summary = {
         ...stats,
@@ -1056,7 +1124,7 @@ function createMcpServer(
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return {
+      return finish({
         ...response,
         _meta: {
           tool: toolNames.write,
@@ -1065,15 +1133,14 @@ function createMcpServer(
             path: input.path,
             summary,
             payload: {
-              content: response.content,
-              patch,
+              ...(existed ? { message: "File overwritten. Use a scoped Git diff to compare with a baseline." } : { content: response.content, patch }),
             },
           },
         },
         structuredContent: {
           result: contentText(response.content),
         },
-      };
+      }, workspaceId);
     },
   );
 
@@ -1125,7 +1192,7 @@ function createMcpServer(
           workspaceId,
           path: input.path,
         }, response.content, startedAt);
-        return response;
+        return finish(response, workspaceId);
       }
 
       const stats = countDiffStats(
@@ -1145,7 +1212,7 @@ function createMcpServer(
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return {
+      return finish({
         content: editContent,
         _meta: {
           tool: toolNames.edit,
@@ -1163,7 +1230,7 @@ function createMcpServer(
           status: "applied",
           result: contentText(editContent),
         },
-      };
+      }, workspaceId);
     },
   );
   }
@@ -1216,7 +1283,7 @@ function createMcpServer(
           durationMs: Math.round(performance.now() - startedAt),
         });
 
-        return {
+        return finish({
           content,
           _meta: {
             tool: "apply_patch",
@@ -1238,7 +1305,7 @@ function createMcpServer(
             removals: applied.removals,
             files: applied.files,
           },
-        };
+        }, workspaceId);
       },
     );
   }
@@ -1278,7 +1345,7 @@ function createMcpServer(
           durationMs: Math.round(performance.now() - startedAt),
         });
 
-        return {
+        return finish({
           content,
           _meta: {
             tool: "show_changes",
@@ -1287,14 +1354,14 @@ function createMcpServer(
               summary: review.summary,
               files: review.files,
               payload: {
-                patch: review.patch,
+                ...(review.previewOmitted ? { message: review.previewMessage } : { patch: review.patch }),
               },
             },
           },
           structuredContent: {
             result: contentText(content),
           },
-        };
+        }, workspaceId);
       },
     );
   }
@@ -1339,7 +1406,7 @@ function createMcpServer(
             workspaceId,
             path: input.path,
           }, response.content, startedAt);
-          return response;
+          return finish(response, workspaceId);
         }
 
         const summary = {
@@ -1355,7 +1422,7 @@ function createMcpServer(
           durationMs: Math.round(performance.now() - startedAt),
         });
 
-        return {
+        return finish({
           ...response,
           _meta: {
             tool: toolNames.grep,
@@ -1369,7 +1436,7 @@ function createMcpServer(
           structuredContent: {
             result: contentText(response.content),
           },
-        };
+        }, workspaceId);
       },
     );
 
@@ -1409,7 +1476,7 @@ function createMcpServer(
             workspaceId,
             path: input.path,
           }, response.content, startedAt);
-          return response;
+          return finish(response, workspaceId);
         }
 
         const summary = {
@@ -1425,7 +1492,7 @@ function createMcpServer(
           durationMs: Math.round(performance.now() - startedAt),
         });
 
-        return {
+        return finish({
           ...response,
           _meta: {
             tool: toolNames.glob,
@@ -1439,7 +1506,7 @@ function createMcpServer(
           structuredContent: {
             result: contentText(response.content),
           },
-        };
+        }, workspaceId);
       },
     );
 
@@ -1479,7 +1546,7 @@ function createMcpServer(
             workspaceId,
             path: input.path,
           }, response.content, startedAt);
-          return response;
+          return finish(response, workspaceId);
         }
 
         const summary = textSummary(response.content);
@@ -1491,7 +1558,7 @@ function createMcpServer(
           durationMs: Math.round(performance.now() - startedAt),
         });
 
-        return {
+        return finish({
           ...response,
           _meta: {
             tool: toolNames.ls,
@@ -1505,7 +1572,7 @@ function createMcpServer(
           structuredContent: {
             result: contentText(response.content),
           },
-        };
+        }, workspaceId);
       },
     );
   }
@@ -1565,7 +1632,7 @@ function createMcpServer(
           command: input.command,
           commandLength: input.command.length,
         }, response.content, startedAt);
-        return response;
+        return finish(response, workspaceId);
       }
 
       const summary = {
@@ -1583,7 +1650,7 @@ function createMcpServer(
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return {
+      return finish({
         ...response,
         _meta: {
           tool: toolNames.shell,
@@ -1597,13 +1664,13 @@ function createMcpServer(
         structuredContent: {
           result: contentText(response.content),
         },
-      };
+      }, workspaceId);
     },
   );
   }
 
   if (config.toolMode === "codex") {
-    registerCodexProcessTools(server, config, workspaces, processSessions);
+    registerCodexProcessTools(server, config, workspaces, processSessions, finish);
   }
 
   if (config.artifactsEnabled && isArtifactDownloadSupportedPlatform()) {
@@ -1614,6 +1681,7 @@ function createMcpServer(
     });
   }
 
+  registerOutputTools(server, config, workspaces, resultPolicy);
   return server;
 }
 
@@ -1634,7 +1702,11 @@ export function createServer(
     host: config.host,
     ...(allowedHosts ? { allowedHosts } : {}),
   });
+  const budgets = performanceConfig(config);
+  const outputCache = new OutputCache({ maxBytes: budgets.outputCacheBytes, maxEntryBytes: budgets.outputEntryBytes, ttlMs: budgets.outputCacheTtlMs });
+  const resultPolicy = new ToolResultPolicy(outputCache, budgets);
   const transports = new McpSessionRegistry<Transport>();
+  let initializingSessions = 0;
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl, config.stateDir);
@@ -1645,8 +1717,12 @@ export function createServer(
   });
   const workspaceStore = createWorkspaceStore(config.stateDir);
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
-  const reviewCheckpoints = createReviewCheckpointManager();
-  const processSessions = new ProcessSessionManager();
+  const reviewCheckpoints = createReviewCheckpointManager({ maxPatchCharacters: budgets.maxPreviewCharacters });
+  const processSessions = new ProcessSessionManager({
+    maxBufferCharacters: budgets.processBufferCharacters,
+    maxSessions: budgets.maxProcessSessions,
+    defaultMaxOutputTokens: budgets.defaultProcessOutputTokens,
+  });
   const localAgentProviders = config.subagents
     ? getLocalAgentProviderAvailabilitySnapshot()
     : [];
@@ -1676,8 +1752,9 @@ export function createServer(
   };
 
   const sessionCleanupTimer = setInterval(() => {
+    outputCache.prune();
     void transports
-      .closeIdle(MCP_SESSION_IDLE_TIMEOUT_MS)
+      .closeIdle(budgets.mcpSessionIdleMs)
       .then((results) => logSessionCloseResults("idle_timeout", results));
   }, MCP_SESSION_CLEANUP_INTERVAL_MS);
   sessionCleanupTimer.unref();
@@ -1745,12 +1822,17 @@ export function createServer(
     const initializeRequest = req.method === "POST" && isInitializeRequest(req.body);
 
     await new Promise<void>((resolve, reject) => {
+      const done = () => { cleanup(); resolve(); };
+      const cleanup = () => { res.off("finish", done); res.off("close", done); };
+      res.once("finish", done);
+      res.once("close", done);
       bearerAuth(req, res, (error?: unknown) => {
+        cleanup();
         if (error) reject(error);
         else resolve();
       });
     });
-    if (res.headersSent) return;
+    if (res.headersSent || res.destroyed) return;
 
     if (!req.auth?.resource || !checkResourceAllowed({ requestedResource: req.auth.resource, configuredResource: resourceServerUrl })) {
       logEvent(config.logging, "warn", "auth_denied", {
@@ -1772,6 +1854,8 @@ export function createServer(
       isInitialize: initializeRequest,
     });
 
+    let reservedInitialization = false;
+    let createdTransport: Transport | undefined;
     try {
       let transport: Transport | undefined;
 
@@ -1782,6 +1866,12 @@ export function createServer(
           return;
         }
       } else if (initializeRequest) {
+        if (transports.size + initializingSessions >= budgets.maxMcpSessions) {
+          sendJsonRpcError(res, 429, -32000, "MCP session limit reached. Close unused connections and retry.");
+          return;
+        }
+        initializingSessions++;
+        reservedInitialization = true;
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId) => {
@@ -1794,6 +1884,7 @@ export function createServer(
           },
         });
 
+        createdTransport = transport;
         transport.onclose = () => {
           const closedSessionId = transport?.sessionId;
           if (closedSessionId && transports.remove(closedSessionId)) {
@@ -1811,6 +1902,7 @@ export function createServer(
           processSessions,
           localAgentProviders,
           incomingArtifactAdapters,
+          resultPolicy,
         );
         await server.connect(transport);
       } else {
@@ -1820,6 +1912,7 @@ export function createServer(
 
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
+      if (createdTransport) await createdTransport.close().catch(() => undefined);
       logEvent(config.logging, "error", "mcp_request_error", {
         requestId,
         error: error instanceof Error ? error.message : String(error),
@@ -1827,6 +1920,8 @@ export function createServer(
       if (!res.headersSent) {
         sendJsonRpcError(res, 500, -32603, "Internal server error");
       }
+    } finally {
+      if (reservedInitialization) initializingSessions--;
     }
   });
 
@@ -1840,9 +1935,10 @@ export function createServer(
         clearInterval(sessionCleanupTimer);
         const results = await transports.closeAll();
         logSessionCloseResults("server_shutdown", results);
-        processSessions.shutdown();
-        oauthProvider.close();
-        workspaceStore.close?.();
+        await processSessions.shutdown();
+        outputCache.clear();
+        try { await reviewCheckpoints.close(); }
+        finally { oauthProvider.close(); workspaceStore.close?.(); }
       })();
       return closePromise;
     },

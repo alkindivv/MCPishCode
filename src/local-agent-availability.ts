@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, resolve } from "node:path";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import {
@@ -34,9 +34,9 @@ export function checkLocalAgentProviderAvailability(
         env: piAvailabilityEnvironment(env),
       });
     case "cursor":
-      return commandAvailability(provider, "cursor-agent");
+      return commandAvailability(provider, "cursor-agent", { env });
     case "copilot":
-      return commandAvailability(provider, "copilot");
+      return commandAvailability(provider, "copilot", { env });
   }
 }
 
@@ -128,16 +128,13 @@ function candidateCommandPaths(command: string, env: NodeJS.ProcessEnv): string[
 }
 
 function executableExists(command: string, env: NodeJS.ProcessEnv): boolean {
-  const result = spawnSync(command, ["--version"], {
-    encoding: "utf8",
-    env,
-    windowsHide: true,
-    timeout: 5_000,
-  });
-  const code = typeof result.error === "object" && result.error && "code" in result.error
-    ? result.error.code
-    : undefined;
-  return code !== "ENOENT";
+  // Existence preflight must not launch every PATH candidate or block for seconds.
+  // It does not claim the provider is authenticated or operational.
+  try {
+    if (!statSync(command).isFile()) return false;
+    accessSync(command, process.platform === "win32" ? constants.F_OK : constants.X_OK);
+    return true;
+  } catch { return false; }
 }
 
 function piAvailabilityEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

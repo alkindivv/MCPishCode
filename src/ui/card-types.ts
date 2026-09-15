@@ -34,6 +34,7 @@ export interface ToolResultCard {
     removals?: number;
   }>;
   payload?: ToolPayload;
+  payloadRef?: string;
   agentsFiles?: Array<{
     path?: string;
     content?: string;
@@ -58,6 +59,7 @@ export interface ToolContent {
 }
 
 export interface ToolPayload {
+  message?: string;
   content?: ToolContent[];
   diff?: string;
   patch?: string;
@@ -114,7 +116,7 @@ export function isToolResultCard(value: unknown): value is Omit<ToolResultCard, 
 
 export function payloadText(payload: ToolPayload | undefined): string {
   return (
-    payload?.content
+    payload?.message ?? payload?.content
       ?.map((item) => {
         if (item.type === "text") return item.text ?? "";
         return `[${item.mimeType ?? "image"} image payload]`;
@@ -133,6 +135,7 @@ export function summaryNumber(
 }
 
 export function isExpandableCard(card: ToolResultCard): boolean {
+  if (card.payloadRef || card.payload?.message) return true;
   if (card.tool === "open_workspace") {
     return (
       Number(card.summary?.agentsFiles ?? 0) > 0 ||

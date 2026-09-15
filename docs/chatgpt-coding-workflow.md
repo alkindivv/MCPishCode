@@ -62,7 +62,9 @@ to proceed with the user.
 
 ## Project Instructions
 
-When a workspace opens, MCPishCode loads root-level instruction files:
+When a workspace opens, MCPishCode discovers root-level instruction files. In
+compact mode, it returns their paths with `needsRead: true`; the model must use
+`read` and follow any continuation before beginning work:
 
 - `AGENTS.md`
 - `AGENTS.MD`
@@ -150,18 +152,19 @@ a PTY, or send Ctrl-C. Set `tty: true` only for commands that need a terminal.
 
 ## Show Changes
 
-By default, `MCPISHCODE_WIDGETS=full`.
+By default in this audit build, `MCPISHCODE_WIDGETS=off`.
 
-In that mode, MCPishCode attaches widget UI to the exposed workspace, file, edit,
-and shell tools. The aggregate `show_changes` tool is not exposed by default.
-
-Use `MCPISHCODE_WIDGETS=off` to disable widget UI, or `MCPISHCODE_WIDGETS=changes`
-to expose the aggregate show-changes flow.
+Use `MCPISHCODE_WIDGETS=changes` for a workspace card and aggregate
+`show_changes` flow, or `full` for per-tool cards. Cards start collapsed and load
+preview data only when expanded. Disabling widgets does not disable the host's
+own native tool activity display. See [Performance and migration](performance.md).
 
 When `show_changes` is exposed, models should call it exactly once after the
 final file modification in any turn that changes files. The tool only requires
 the `workspaceId`; MCPishCode automatically compares against the last shown
-checkpoint and advances that checkpoint after rendering the aggregate diff.
+checkpoint and advances that checkpoint after generating the review response,
+even when the preview is too large or the user never expands the card. Use
+`since="workspace_open"` or `markReviewed=false` when that distinction matters.
 
 ## Shell Use
 
@@ -175,3 +178,10 @@ The shell tool is for commands that belong in a terminal:
 
 File writes should go through the edit/write tools rather than shell
 redirection, heredocs, `tee`, `sed -i`, or generated scripts.
+
+## Retained output
+
+`read_output` is exposed in all tool modes. When an ordinary result includes an
+`outputId`, reuse the same `workspaceId` and page with `nextOffset`. Do not rerun
+commands or file mutations just to recover output. Upstream-discarded text cannot
+be recovered; cache entries can expire, be evicted, or disappear on restart.

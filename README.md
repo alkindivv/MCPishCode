@@ -18,7 +18,21 @@
 
 **Give ChatGPT a secure connection to your own machine and Turn ChatGPT into Codex**
 
-MCPishCode is a self-hosted MCP server that lets ChatGPT read, edit, search, and run code in your real local projects — your files, your tools, your terminal — without uploading anything to a third party. You run it on your machine, expose it through a tunnel you control, and approve the connection with a password only you have.
+MCPishCode is a self-hosted MCP server that lets ChatGPT read, edit, search, and run code in your real local projects — your files, your tools, your terminal — without uploading the entire project by default. Requested tool results are transmitted to the connected MCP client; when that client is ChatGPT, returned file content and command output are shared with ChatGPT. You run it on your machine, expose it through a tunnel you control, and approve the connection with a password only you have.
+
+## Performance audit build - 2026-09-14
+
+This source archive includes a local optimization patch, not a newly published npm
+release. **Build and launch this checkout**; `npx @alkindivv/mcpishcode` otherwise
+runs the published package without these changes.
+
+Widgets now default to `off`, result text is sent once in compact mode, and long
+results have bounded, on-demand continuation. Optional previews are lazy-loaded.
+See [performance and migration guide](docs/performance.md),
+[the audit report](AUDIT_REPORT.md), and `audit/` for reproducible evidence.
+The native-core tests passed, but the full dependency build and actual ChatGPT
+integration were not run in the audit environment. Run the full validation gate
+in the guide before adopting this patch for important work.
 
 ## Sponsors and Special Thanks
 

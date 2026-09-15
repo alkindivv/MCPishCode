@@ -6,8 +6,8 @@ const DEFAULT_INTERACTIVE_YIELD_MS = 250;
 const DEFAULT_POLL_YIELD_MS = 5_000;
 const MAX_COMMAND_YIELD_MS = 30_000;
 const MAX_POLL_YIELD_MS = 110_000;
-const DEFAULT_MAX_OUTPUT_TOKENS = 10_000;
-const DEFAULT_BUFFER_CHARACTERS = 1_000_000;
+const DEFAULT_MAX_OUTPUT_TOKENS = 2_000;
+const DEFAULT_BUFFER_CHARACTERS = 64_000;
 const COMPLETED_SESSION_TTL_MS = 5 * 60 * 1_000;
 const DEFAULT_COLUMNS = 80;
 const DEFAULT_ROWS = 24;
@@ -61,14 +61,15 @@ interface ProcessSession {
   running: boolean;
   exitCode?: number;
   signal?: string;
-  exitPromise: Promise<void>;
-  resolveExit: () => void;
+  exitWaiters: Set<() => void>;
   cleanupTimer?: NodeJS.Timeout;
 }
 
 interface ProcessSessionManagerOptions {
   maxBufferCharacters?: number;
   completedSessionTtlMs?: number;
+  maxSessions?: number;
+  defaultMaxOutputTokens?: number;
 }
 
 function boundedInteger(value: number | undefined, fallback: number, maximum: number): number {
@@ -109,106 +110,123 @@ function processEnvironment(input?: {
 }
 
 function codePointLength(value: string): number {
-  return Array.from(value).length;
+  let count = 0;
+  for (let i = 0; i < value.length; i++, count++) {
+    const high = value.charCodeAt(i);
+    if (high >= 0xd800 && high <= 0xdbff) {
+      const low = value.charCodeAt(i + 1);
+      if (low >= 0xdc00 && low <= 0xdfff) i++;
+    }
+  }
+  return count;
 }
 
-function sliceCodePoints(value: string, start: number, end?: number): string {
-  return Array.from(value).slice(start, end).join("");
+function codePointIndex(value: string, count: number): number {
+  let i = 0;
+  while (i < value.length && count-- > 0) {
+    const high = value.charCodeAt(i++);
+    if (high >= 0xd800 && high <= 0xdbff) {
+      const low = value.charCodeAt(i);
+      if (low >= 0xdc00 && low <= 0xdfff) i++;
+    }
+  }
+  return i;
 }
-
 function takeHead(value: string, count: number): string {
-  if (count <= 0) return "";
-  return sliceCodePoints(value, 0, count);
+  return value.slice(0, codePointIndex(value, Math.max(0, count)));
 }
-
 function takeTail(value: string, count: number): string {
-  if (count <= 0) return "";
-  const characters = Array.from(value);
-  return characters.slice(Math.max(0, characters.length - count)).join("");
+  let start = value.length;
+  while (start > 0 && count-- > 0) {
+    const low = value.charCodeAt(--start);
+    if (low >= 0xdc00 && low <= 0xdfff && start > 0) {
+      const high = value.charCodeAt(start - 1);
+      if (high >= 0xd800 && high <= 0xdbff) start--;
+    }
+  }
+  return value.slice(start);
+}
+function formatHeadTail(head: string, tail: string, omitted: number): string {
+  return omitted > 0 ? `${head}\n... output truncated (${omitted} characters omitted) ...\n${tail}` : head + tail;
 }
 
-function splitBudget(maxCharacters: number): { head: number; tail: number } {
-  return {
-    head: Math.ceil(maxCharacters / 2),
-    tail: Math.floor(maxCharacters / 2),
-  };
-}
-
-function formatHeadTail(head: string, tail: string, omittedCharacters: number): string {
-  if (omittedCharacters <= 0) return head + tail;
-  return `${head}\n... output truncated (${omittedCharacters} characters omitted) ...\n${tail}`;
-}
-
+/** Bounded chunk deque: append work scales with incoming data, not the retained tail. */
 export class HeadTailBuffer {
-  private head = "";
-  private tail = "";
+  private headChunks: string[] = [];
+  private tailChunks: Array<{ text: string; characters: number }> = [];
+  private tailStart = 0;
+  private headCharacters = 0;
+  private tailCharacters = 0;
   private totalCharacters = 0;
+  private readonly headLimit: number;
+  private readonly tailLimit: number;
 
   constructor(private readonly maxCharacters: number) {
     if (!Number.isInteger(maxCharacters) || maxCharacters < 1) {
       throw new Error("Head/tail buffer limit must be a positive integer.");
     }
+    this.headLimit = Math.ceil(maxCharacters / 2);
+    this.tailLimit = Math.floor(maxCharacters / 2);
   }
 
   append(output: string): void {
     if (!output) return;
-
-    const previousTotal = this.totalCharacters;
-    this.totalCharacters += codePointLength(output);
-
-    if (this.totalCharacters <= this.maxCharacters) {
-      this.head += output;
-      return;
+    const length = codePointLength(output);
+    this.totalCharacters += length;
+    const headCount = Math.min(length, this.headLimit - this.headCharacters);
+    const split = codePointIndex(output, headCount);
+    if (headCount > 0) {
+      const head = output.slice(0, split);
+      this.headChunks.push(output.length > this.maxCharacters * 2 ? Buffer.from(head).toString("utf8") : head);
+      this.headCharacters += headCount;
     }
-
-    const budget = splitBudget(this.maxCharacters);
-    if (previousTotal <= this.maxCharacters) {
-      const fullOutput = this.head + output;
-      this.head = takeHead(fullOutput, budget.head);
-      this.tail = takeTail(fullOutput, budget.tail);
-      return;
+    const remaining = length - headCount;
+    if (remaining > 0 && this.tailLimit > 0) {
+      // A single huge chunk must not be retained just to slice it on the next append.
+      const retainedCount = Math.min(remaining, this.tailLimit);
+      const tail = takeTail(output.slice(split), retainedCount);
+      this.tailChunks.push({ text: output.length > this.maxCharacters * 2 ? Buffer.from(tail).toString("utf8") : tail, characters: retainedCount });
+      this.tailCharacters += retainedCount;
+      let excess = this.tailCharacters - this.tailLimit;
+      while (excess > 0) {
+        const first = this.tailChunks[this.tailStart]!;
+        const drop = Math.min(first.characters, excess);
+        if (drop === first.characters) {
+          this.tailChunks[this.tailStart++] = { text: "", characters: 0 };
+        }
+        else this.tailChunks[this.tailStart] = { text: first.text.slice(codePointIndex(first.text, drop)), characters: first.characters - drop };
+        this.tailCharacters -= drop;
+        excess -= drop;
+      }
+      if (this.tailStart > 128 && this.tailStart * 2 > this.tailChunks.length) {
+        this.tailChunks = this.tailChunks.slice(this.tailStart);
+        this.tailStart = 0;
+      }
     }
-
-    this.tail = takeTail(this.tail + output, budget.tail);
   }
 
-  hasOutput(): boolean {
-    return this.totalCharacters > 0;
-  }
+  hasOutput(): boolean { return this.totalCharacters > 0; }
 
   drain(maxCharacters: number): { output: string; truncated: boolean } {
-    if (!Number.isInteger(maxCharacters) || maxCharacters < 1) {
-      throw new Error("Output limit must be a positive integer.");
-    }
-
-    const omittedByBuffer = Math.max(
-      0,
-      this.totalCharacters - codePointLength(this.head) - codePointLength(this.tail),
-    );
-    const retained = formatHeadTail(this.head, this.tail, omittedByBuffer);
-    const output = truncateOutput(retained, maxCharacters);
-    const truncated = omittedByBuffer > 0 || output.truncated;
-
-    this.head = "";
-    this.tail = "";
-    this.totalCharacters = 0;
-
-    return { output: output.output, truncated };
+    if (!Number.isInteger(maxCharacters) || maxCharacters < 1) throw new Error("Output limit must be a positive integer.");
+    const head = this.headChunks.join("");
+    const tail = this.tailChunks.slice(this.tailStart).map((chunk) => chunk.text).join("");
+    const omitted = this.totalCharacters - this.headCharacters - this.tailCharacters;
+    const retained = formatHeadTail(head, tail, omitted);
+    const result = truncateOutput(retained, maxCharacters);
+    this.headChunks = [];
+    this.tailChunks = [];
+    this.tailStart = this.headCharacters = this.tailCharacters = this.totalCharacters = 0;
+    return { output: result.output, truncated: omitted > 0 || result.truncated };
   }
 }
 
 function truncateOutput(output: string, maxCharacters: number): { output: string; truncated: boolean } {
-  const outputCharacters = codePointLength(output);
-  if (outputCharacters <= maxCharacters) return { output, truncated: false };
-
+  if (codePointLength(output) <= maxCharacters) return { output, truncated: false };
   const marker = "\n... output truncated ...\n";
-  const markerCharacters = codePointLength(marker);
-  const available = Math.max(0, maxCharacters - markerCharacters);
-  const budget = splitBudget(available);
-  return {
-    output: takeHead(output, budget.head) + marker + takeTail(output, budget.tail),
-    truncated: true,
-  };
+  if (maxCharacters <= marker.length) return { output: takeHead(marker, maxCharacters), truncated: true };
+  const available = maxCharacters - marker.length;
+  return { output: takeHead(output, Math.ceil(available / 2)) + marker + takeTail(output, Math.floor(available / 2)), truncated: true };
 }
 
 export class ProcessSessionManager {
@@ -216,13 +234,25 @@ export class ProcessSessionManager {
   private readonly maxBufferCharacters: number;
   private readonly completedSessionTtlMs: number;
   private nextSessionId = 1;
+  private readonly maxSessions: number;
+  private readonly defaultMaxOutputTokens: number;
+  private shuttingDown = false;
 
   constructor(options: ProcessSessionManagerOptions = {}) {
     this.maxBufferCharacters = options.maxBufferCharacters ?? DEFAULT_BUFFER_CHARACTERS;
     this.completedSessionTtlMs = options.completedSessionTtlMs ?? COMPLETED_SESSION_TTL_MS;
+    this.maxSessions = options.maxSessions ?? 16;
+    this.defaultMaxOutputTokens = options.defaultMaxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    for (const value of [this.maxBufferCharacters, this.completedSessionTtlMs, this.maxSessions, this.defaultMaxOutputTokens]) {
+      if (!Number.isSafeInteger(value) || value < 1) throw new Error("Process session budgets must be positive integers.");
+    }
   }
 
   async start(input: StartCommandInput): Promise<ProcessSnapshot> {
+    if (this.shuttingDown) throw new Error("Process manager is shutting down.");
+    if (this.sessions.size >= this.maxSessions) throw new Error("Process session limit reached. Stop or poll existing sessions before starting another command.");
+    const yieldTimeMs = boundedInteger(input.yieldTimeMs, DEFAULT_EXEC_YIELD_MS, MAX_COMMAND_YIELD_MS);
+    this.validateOutputLimit(input.maxOutputTokens);
     const session = this.createSession(input);
     this.sessions.set(session.id, session);
 
@@ -234,7 +264,6 @@ export class ProcessSessionManager {
       throw error;
     }
 
-    const yieldTimeMs = boundedInteger(input.yieldTimeMs, DEFAULT_EXEC_YIELD_MS, MAX_COMMAND_YIELD_MS);
     await this.waitForExit(session, yieldTimeMs);
 
     const snapshot = this.consume(session, input.maxOutputTokens);
@@ -243,6 +272,8 @@ export class ProcessSessionManager {
   }
 
   async write(input: WriteStdinInput): Promise<ProcessSnapshot> {
+    this.validateOutputLimit(input.maxOutputTokens);
+    boundedInteger(input.yieldTimeMs, DEFAULT_POLL_YIELD_MS, MAX_POLL_YIELD_MS);
     const session = this.getOwnedSession(input.workspaceId, input.sessionId);
     const chars = input.chars ?? "";
     const interactionRequested =
@@ -281,34 +312,37 @@ export class ProcessSessionManager {
     if (session.running) session.process?.kill("SIGTERM");
   }
 
-  shutdown(): void {
-    for (const session of this.sessions.values()) {
+  async shutdown(): Promise<void> {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+    const sessions = [...this.sessions.values()];
+    for (const session of sessions) {
       if (session.cleanupTimer) clearTimeout(session.cleanupTimer);
       if (session.running) session.process?.kill("SIGTERM");
     }
+    await Promise.all(sessions.map((session) => this.waitForExit(session, 1_000)));
+    for (const session of sessions) if (session.running) session.process?.kill("SIGKILL");
     this.sessions.clear();
   }
 
-  private async waitForExit(session: ProcessSession, yieldTimeMs: number): Promise<void> {
-    let timer: NodeJS.Timeout | undefined;
-    try {
-      await Promise.race([
-        session.exitPromise,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, yieldTimeMs);
-        }),
-      ]);
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
+  private validateOutputLimit(limit: number | undefined): void {
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) throw new Error("Output token budget must be a positive integer.");
+  }
+
+  private waitForExit(session: ProcessSession, yieldTimeMs: number): Promise<void> {
+    if (!session.running) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        session.exitWaiters.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, yieldTimeMs);
+      session.exitWaiters.add(done);
+    });
   }
 
   private createSession(input: StartCommandInput): ProcessSession {
-    let resolveExit = (): void => undefined;
-    const exitPromise = new Promise<void>((resolve) => {
-      resolveExit = resolve;
-    });
-
     return {
       id: this.nextSessionId++,
       workspaceId: input.workspaceId,
@@ -317,15 +351,14 @@ export class ProcessSessionManager {
       rows: terminalSize(input.rows, DEFAULT_ROWS),
       buffer: new HeadTailBuffer(this.maxBufferCharacters),
       running: true,
-      exitPromise,
-      resolveExit,
+      exitWaiters: new Set(),
     };
   }
 
   private startPipe(session: ProcessSession, input: StartCommandInput): void {
     const shell = resolveShellCommand(input.command);
     const detached = process.platform !== "win32";
-    const child = spawn(input.command, {
+    const child = spawn(shell.executable, shell.args, {
       cwd: input.cwd,
       env: processEnvironment({
         workspaceId: input.workspaceId,
@@ -334,7 +367,6 @@ export class ProcessSessionManager {
       stdio: "pipe",
       windowsHide: true,
       detached,
-      shell: shell.executable,
     });
 
     session.process = {
@@ -342,8 +374,11 @@ export class ProcessSessionManager {
       kill: (signal = "SIGTERM") => terminateProcessTree(child, signal, detached),
       resize: input.tty ? () => undefined : undefined,
     };
-    child.stdout.on("data", (data: Buffer) => this.append(session, data.toString("utf8")));
-    child.stderr.on("data", (data: Buffer) => this.append(session, data.toString("utf8")));
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (data: string) => this.append(session, data));
+    child.stderr.on("data", (data: string) => this.append(session, data));
+    child.stdin.on("error", (error) => this.append(session, `${error.message}\n`));
     child.on("error", (error) => this.append(session, `${error.message}\n`));
     child.on("close", (code, signal) => this.finish(session, code ?? undefined, signal ?? undefined));
   }
@@ -389,7 +424,9 @@ export class ProcessSessionManager {
     session.running = false;
     session.exitCode = exitCode;
     session.signal = signal;
-    session.resolveExit();
+    for (const done of session.exitWaiters) done();
+    session.exitWaiters.clear();
+    if (this.shuttingDown || !this.sessions.has(session.id)) return;
     session.cleanupTimer = setTimeout(
       () => this.sessions.delete(session.id),
       this.completedSessionTtlMs,
@@ -402,7 +439,7 @@ export class ProcessSessionManager {
   }
 
   private consume(session: ProcessSession, maxOutputTokens?: number): ProcessSnapshot {
-    const limit = boundedInteger(maxOutputTokens, DEFAULT_MAX_OUTPUT_TOKENS, 100_000);
+    const limit = boundedInteger(maxOutputTokens, this.defaultMaxOutputTokens, 100_000);
     const maxCharacters = Math.max(256, limit * 4);
     const buffered = session.buffer.drain(maxCharacters);
 
