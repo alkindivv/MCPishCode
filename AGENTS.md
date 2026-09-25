@@ -1,4 +1,13 @@
-# DevSpace
+# MCPishCode Lean
+
+This fork is text-native. Do not reintroduce MCP Apps widgets, `show_changes`,
+workspace `/web` pages, browser assets/builds, activity recording, UI resources,
+card metadata, or duplicate `structuredContent` on the MCP wire. Typed internal
+Code Mode DTOs are not UI; preserve process state needed for script polling.
+Keep instruction contents, skill paths and workspace identity visible in text.
+See `docs/text-only-boundary.md` and real OAuth/MCP/package E2E scripts.
+
+The upstream architecture below still applies to retained runtime components.
 
 DevSpace is a local development execution layer for MCP hosts such as ChatGPT and Claude. It gives a remote host workspace-scoped tools for reading, editing, searching, running commands, managing Git worktrees, reviewing changes, and coordinating bounded subagents on the user's machine.
 

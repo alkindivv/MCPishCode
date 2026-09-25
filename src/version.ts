@@ -7,7 +7,8 @@ const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as { version?: unknown };
 
 if (!isJsonString(packageJson.version) || !packageJson.version) {
-  throw new Error("DevSpace package version is missing.");
+  throw new Error("MCPishCode package version is missing.");
 }
 
-export const DEVSPACE_VERSION = packageJson.version;
+export const MCPISHCODE_VERSION = packageJson.version;
+export const DEVSPACE_VERSION = MCPISHCODE_VERSION;

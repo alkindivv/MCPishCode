@@ -4,7 +4,7 @@ import { subagentsConfigSchema } from "./local-agent-config.js";
 export const DEVSPACE_CONFIG_VERSION = 1 as const;
 
 export const DEVSPACE_CONFIG_SCHEMA_URL =
-  "https://raw.githubusercontent.com/Waishnav/devspace/main/schema/v1/devspace.schema.json";
+  "https://raw.githubusercontent.com/alkindivv/MCPishCode/main/schema/v1/mcpishcode.schema.json";
 
 const serverConfigSchema = z.object({
   host: z.string().trim().min(1).default("127.0.0.1"),
@@ -16,34 +16,23 @@ const serverConfigSchema = z.object({
 
 const workspacesConfigSchema = z.object({
   allowedRoots: z.array(z.string().trim().min(1)).default([]),
-  worktreeRoot: z.string().trim().min(1).default("~/.devspace/worktrees"),
+  worktreeRoot: z.string().trim().min(1).default("~/.mcpishcode/worktrees"),
 }).strict().prefault({});
 
 const storageConfigSchema = z.object({
-  stateDir: z.string().trim().min(1).default("~/.local/share/devspace"),
+  stateDir: z.string().trim().min(1).default("~/.local/share/mcpishcode"),
 }).strict().prefault({});
 
 const toolsConfigSchema = z.object({
   mode: z.enum(["claude", "codex"]).optional().meta({
     description:
-      "Optional override. When unset, DevSpace picks the tool surface from the connecting MCP host.",
+      "Optional override. When unset, MCPishCode picks the tool surface from the connecting MCP host.",
   }),
-}).strict().prefault({});
-
-const uiConfigSchema = z.object({
-  enabled: z.boolean().default(true),
 }).strict().prefault({});
 
 const artifactsConfigSchema = z.object({
   enabled: z.boolean().default(false),
   maxFileBytes: z.number().int().positive().default(100 * 1024 * 1024),
-}).strict().prefault({});
-
-const activityConfigSchema = z.object({
-  enabled: z.boolean().default(true)
-    .describe("Record workspace tool calls, with their arguments and results, in the local state database."),
-  maxTurns: z.number().int().positive().default(200)
-    .describe("Closed turns kept per workspace. Older turns and their tool calls are deleted."),
 }).strict().prefault({});
 
 const skillsConfigSchema = z.object({
@@ -56,7 +45,6 @@ const loggingConfigSchema = z.object({
   level: z.enum(["silent", "error", "warn", "info", "debug"]).default("info"),
   format: z.enum(["json", "pretty"]).default("json"),
   requests: z.boolean().default(true),
-  assets: z.boolean().default(false),
   toolCalls: z.boolean().default(true),
   shellCommands: z.boolean().default(false),
 }).strict().prefault({});
@@ -66,7 +54,7 @@ const oauthConfigSchema = z.object({
   refreshTokenTtlSeconds: z.number().int().positive().default(30 * 24 * 60 * 60),
   refreshTokenGraceSeconds: z.number().int().min(0).max(600).default(0)
     .describe("Allow refresh-token retries for up to this many seconds after rotation. Zero consumes tokens immediately."),
-  scopes: z.array(z.string().trim().min(1)).min(1).default(["devspace"]),
+  scopes: z.array(z.string().trim().min(1)).min(1).default(["mcpishcode"]),
   allowedResourceUrls: z.array(z.string().trim().url().refine((value) => {
     const url = URL.parse(value);
 
@@ -91,8 +79,6 @@ export const devspaceConfigSchema = z.object({
   workspaces: workspacesConfigSchema,
   storage: storageConfigSchema,
   tools: toolsConfigSchema,
-  ui: uiConfigSchema,
-  activity: activityConfigSchema,
   artifacts: artifactsConfigSchema,
   skills: skillsConfigSchema,
   // Absent means "never configured", which differs from an explicit `enabled: false`.
@@ -112,8 +98,8 @@ export function defaultDevspaceConfig(): DevspaceConfig {
 export function devspaceConfigJsonSchema() {
   return {
     $id: DEVSPACE_CONFIG_SCHEMA_URL,
-    title: "DevSpace configuration",
-    description: "Versioned configuration for a local DevSpace MCP server.",
+    title: "MCPishCode configuration",
+    description: "Versioned configuration for a local MCPishCode MCP server.",
     ...z.toJSONSchema(devspaceConfigSchema, {
       target: "draft-2020-12",
       io: "input",

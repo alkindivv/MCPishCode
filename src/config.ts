@@ -10,7 +10,7 @@ import {
   type SubagentsConfig,
 } from "./local-agent-config.js";
 
-/** What `devspace agents` and the agent daemon need. They run without OAuth, a public URL, or a server. */
+/** What `mcpishcode agents` and the agent daemon need. They run without OAuth, a public URL, or a server. */
 export interface AgentConfig {
   configDir: string;
   allowedRoots: string[];
@@ -30,8 +30,6 @@ export interface ServerConfig extends AgentConfig {
   /** Explicit `tools.mode`; when set it wins over host detection. */
   toolSurfaceOverride: "claude" | "codex" | undefined;
   experimentalCodeMode: boolean;
-  uiEnabled: boolean;
-  activity: { enabled: boolean; maxTurns: number };
   artifactsEnabled: boolean;
   artifactMaxFileBytes: number;
   skillsEnabled: boolean;
@@ -65,7 +63,7 @@ function agentConfig(files: DevspaceFiles, env: NodeJS.ProcessEnv, subagents: Su
   };
 }
 
-/** Strict config for `devspace serve`: requires the owner token. Subagents stay an explicit opt-in. */
+/** Strict config for `mcpishcode serve`: requires the owner token. Subagents stay an explicit opt-in. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const files = loadDevspaceFiles(env);
   const stored = files.config;
@@ -91,7 +89,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     port,
     oauth: {
       ownerToken: parseRequiredSecret(
-        env.DEVSPACE_OAUTH_OWNER_TOKEN ?? files.auth.ownerToken,
+        env.MCPISHCODE_OAUTH_OWNER_TOKEN ?? env.DEVSPACE_OAUTH_OWNER_TOKEN ?? files.auth.ownerToken,
       ),
       accessTokenTtlSeconds: stored.oauth.accessTokenTtlSeconds,
       refreshTokenTtlSeconds: stored.oauth.refreshTokenTtlSeconds,
@@ -104,8 +102,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     publicBaseUrl,
     toolSurfaceOverride: stored.tools.mode,
     experimentalCodeMode: env.DEVSPACE_EXPERIMENTAL_CODE_MODE === "1",
-    uiEnabled: stored.ui.enabled,
-    activity: stored.activity,
     artifactsEnabled: stored.artifacts.enabled,
     artifactMaxFileBytes: stored.artifacts.maxFileBytes,
     skillsEnabled: stored.skills.enabled,
@@ -140,7 +136,7 @@ function parseRequiredSecret(value: string | undefined): string {
   const secret = value?.trim();
 
   if (!secret) {
-    throw new Error("OAuth owner token is required. Run: devspace init");
+    throw new Error("OAuth owner token is required. Run: mcpishcode init");
   }
 
   if (secret.length < 16) {

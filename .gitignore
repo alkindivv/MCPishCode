@@ -4,3 +4,6 @@ releases/
 .devspace-dev/
 .env
 *.log
+graphify-out/
+artifacts/
+.mcpishcode-dev/

@@ -52,7 +52,6 @@ import {
   type InitAnswers,
   type InitFlags,
   type OnboardingDestination,
-  SUBAGENT_SKILL_INSTALL_COMMAND,
   isNonInteractiveInit,
   parseInitArgs,
   resolveInitAnswers,
@@ -69,7 +68,6 @@ import {
   writeDevspaceAuth,
 } from "./user-config.js";
 import { expandHomePath } from "./roots.js";
-import { readReviewRef } from "./review-checkpoints.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
 import { logEvent } from "./logger.js";
 import { pruneStaleManagedWorktrees } from "./worktree-prune.js";
@@ -85,11 +83,11 @@ type Command =
   | "worktrees"
   | "agents"
   | "workflow"
-  | "show-changes"
   | "help"
   | "version";
 
 const require = createRequire(import.meta.url);
+const SUBAGENT_SKILL_INSTALL_COMMAND = "mcpishcode agents skill --install agents";
 
 // SAFETY: package.json always declares engines.node; it is the single source for the supported range.
 const SUPPORTED_NODE_RANGE = (require("../package.json") as { engines: { node: string } }).engines.node;
@@ -133,10 +131,6 @@ async function main(argv: string[]): Promise<void> {
       return;
     }
 
-    case "show-changes":
-      await runShowChanges(args);
-
-      return;
     case "help":
       printHelp();
 
@@ -157,7 +151,6 @@ function normalizeCommand(command: string | undefined): Command {
     || command === "config"
     || command === "worktrees"
     || command === "agents"
-    || command === "show-changes"
   ) return command;
 
   if (command === "workflow" && workflowsEnabled()) return command;
@@ -177,20 +170,20 @@ async function ensureConfigured(): Promise<void> {
 
   if (files.configExists && files.authExists) return;
 
-  if (process.env.DEVSPACE_OAUTH_OWNER_TOKEN) return;
+  if (process.env.MCPISHCODE_OAUTH_OWNER_TOKEN || process.env.DEVSPACE_OAUTH_OWNER_TOKEN) return;
 
   if (!input.isTTY || !output.isTTY) {
     throw new Error(
       [
-        "DevSpace is not configured and this terminal is non-interactive.",
+        "MCPishCode is not configured and this terminal is non-interactive.",
         "",
         "Run:",
-        "  devspace init",
+        "  mcpishcode init",
         "",
         "Setup questions can also be answered with flags, for example:",
-        "  devspace init --public-url https://your-tunnel-host.example.com --roots ~/work",
+        "  mcpishcode init --public-url https://your-tunnel-host.example.com --roots ~/work",
         "",
-        "Or provide DEVSPACE_OAUTH_OWNER_TOKEN.",
+        "Or provide MCPISHCODE_OAUTH_OWNER_TOKEN (DEVSPACE_OAUTH_OWNER_TOKEN is also supported).",
       ].join("\n"),
     );
   }
@@ -207,11 +200,11 @@ async function runInit(flags: InitFlags): Promise<void> {
       console.log(JSON.stringify({
         status: "already_configured",
         config_path: files.configPath,
-        next_steps: ["Run `devspace init --force` with your answers to update it."],
+        next_steps: ["Run `mcpishcode init --force` with your answers to update it."],
       }, null, 2));
     } else {
-      console.log(`DevSpace is already configured at ${files.dir}`);
-      console.log("Run `devspace init --force` to update it.");
+      console.log(`MCPishCode is already configured at ${files.dir}`);
+      console.log("Run `mcpishcode init --force` to update it.");
     }
 
     return;
@@ -250,7 +243,7 @@ async function runInit(flags: InitFlags): Promise<void> {
   }
 
   try {
-    prompts.intro("DevSpace setup");
+    prompts.intro("MCPishCode setup");
     const destinations: OnboardingDestination[] = [defaults.publicUrl ? "chatgpt" : "coding-agents"];
     // A person confirms the prompt's root, so the current directory is a fine suggestion there.
     const roots = defaults.roots.length > 0 ? defaults.roots : [process.cwd()];
@@ -279,7 +272,7 @@ async function promptInitAnswers(
   port: number,
 ): Promise<InitAnswers> {
   const destinationAnswer = await prompts.multiselect({
-    message: "Where do you want to use DevSpace?",
+    message: "Where do you want to use MCPishCode?",
     options: [
       {
         value: "chatgpt",
@@ -289,7 +282,7 @@ async function promptInitAnswers(
       {
         value: "coding-agents",
         label: "Coding Agents",
-        hint: "Use DevSpace from Codex, Claude Code, OpenCode, Pi, and similar tools.",
+        hint: "Use MCPishCode from Codex, Claude Code, OpenCode, Pi, and similar tools.",
       },
     ],
     initialValues: defaults.destinations,
@@ -306,7 +299,7 @@ async function promptInitAnswers(
     const defaultRoots = defaults.roots.join(", ");
 
     roots = (await textPrompt({
-      message: `Which project folders can DevSpace access? Press Enter to use ${defaultRoots}`,
+      message: `Which project folders can MCPishCode access? Press Enter to use ${defaultRoots}`,
       placeholder: defaultRoots,
       defaultValue: defaultRoots,
       validate: (value) => value?.trim() ? undefined : "Enter at least one project root.",
@@ -332,11 +325,11 @@ async function promptInitAnswers(
   }
 
   prompts.log.info(
-    "DevSpace can delegate work to these agents from ChatGPT or another coding agent.",
+    "MCPishCode can delegate work to these agents from ChatGPT or another coding agent.",
   );
 
   const providerAnswer = await prompts.multiselect({
-    message: "Which agents can DevSpace use as subagents?",
+    message: "Which agents can MCPishCode use as subagents?",
     options: availability.map((provider) => ({
       value: provider.name,
       label: provider.name,
@@ -398,12 +391,12 @@ function applyInitAnswers(
 
 function initNextSteps(result: InitResult): string[] {
   return [
-    ...(usesChatGpt(result.usage) ? ["Run `devspace serve` (restart it if it is already running), then connect ChatGPT."] : []),
+    ...(usesChatGpt(result.usage) ? ["Run `mcpishcode serve` (restart it if it is already running), then connect ChatGPT."] : []),
     ...(usesCodingAgents(result.usage) ? [`Install the Subagents skill: ${SUBAGENT_SKILL_INSTALL_COMMAND}`] : []),
   ];
 }
 
-/** `devspace init --json` output; the MCP fields appear only when an MCP host is set up. */
+/** `mcpishcode init --json` output; the MCP fields appear only when an MCP host is set up. */
 interface InitReport {
   status: "configured";
   config_path: string;
@@ -440,13 +433,13 @@ function printInitResult(result: InitResult, authPath: string, unavailable: stri
   }
 
   console.log([
-    `DevSpace is configured at ${result.configPath}`,
+    `MCPishCode is configured at ${result.configPath}`,
     `Subagents: ${result.providers.join(", ")}`,
     ...unavailable.map((provider) => `Warning: ${provider} is not available yet.`),
     ...(chatGpt ? [
       `Project folders: ${result.allowedRoots!.join(", ")}`,
       `ChatGPT connection URL: ${result.publicBaseUrl}/mcp`,
-      `Owner password: stored in ${authPath}. You enter it when ChatGPT asks to approve DevSpace access.`,
+      `Owner password: stored in ${authPath}. You enter it when ChatGPT asks to approve MCPishCode access.`,
     ] : []),
     ...initNextSteps(result),
   ].join("\n"));
@@ -459,13 +452,13 @@ function printInteractiveInitResult(result: InitResult): void {
     ...(result.publicBaseUrl ? [`ChatGPT connection URL: ${result.publicBaseUrl}/mcp`] : []),
   ];
 
-  prompts.note(lines.join("\n"), "DevSpace is ready");
+  prompts.note(lines.join("\n"), "MCPishCode is ready");
 
   if (usesChatGpt(result.usage)) {
     prompts.note(
       [
         `Owner password: ${result.ownerToken}`,
-        "Use this when ChatGPT asks you to approve DevSpace access.",
+        "Use this when ChatGPT asks you to approve MCPishCode access.",
       ].join("\n"),
       "Owner password",
     );
@@ -476,14 +469,14 @@ function printInteractiveInitResult(result: InitResult): void {
       [
         SUBAGENT_SKILL_INSTALL_COMMAND,
         "",
-        "The Skills CLI will let you choose which Coding Agents receive it.",
+        "Use --install claude-code, codex, opencode, or agents to select a target; Cursor requires --project.",
       ].join("\n"),
       "Install the Subagents skill",
     );
   }
 
   const nextSteps = [
-    usesChatGpt(result.usage) ? "Run `devspace serve`, then connect ChatGPT." : undefined,
+    usesChatGpt(result.usage) ? "Run `mcpishcode serve`, then connect ChatGPT." : undefined,
     usesCodingAgents(result.usage) ? "Run the skill command above before delegating from your Coding Agents." : undefined,
   ].filter(Boolean).join(" ");
 
@@ -494,11 +487,10 @@ async function serve(): Promise<void> {
   const config = loadConfig();
   await runStartupWorktreeCleanup(config);
   const { configureHttpServer, createServer } = await import("./server.js");
-  const { workspaceWebUrl } = await import("./workspace-web.js");
   const { app, close, localAgentProviders } = createServer(config);
 
   const httpServer = app.listen(config.port, config.host, () => {
-    console.log(`devspace listening on http://${config.host}:${config.port}/mcp`);
+    console.log(`mcpishcode listening on http://${config.host}:${config.port}/mcp`);
     console.log(`public base url: ${config.publicBaseUrl}`);
     console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`allowed hosts: ${config.allowedHosts.join(", ")}`);
@@ -508,7 +500,6 @@ async function serve(): Promise<void> {
     }
 
     console.log("auth: Owner password approval required");
-    console.log(`workspace pages: ${workspaceWebUrl(config)} (sign in with the owner password)`);
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`subagent providers: ${formatLocalAgentProviderStatusSummary(localAgentProviders)}`);
   });
@@ -526,7 +517,7 @@ async function serve(): Promise<void> {
 
   const handleShutdown = () => {
     void shutdown().catch((error) => {
-      console.error("devspace shutdown failed", error);
+      console.error("mcpishcode shutdown failed", error);
       process.exit(1);
     });
   };
@@ -619,7 +610,7 @@ function runConfigCommand(args: string[]): void {
   }
 
   if (key !== "publicBaseUrl") {
-    throw new Error("Only `devspace config set publicBaseUrl <url|null>` is supported right now.");
+    throw new Error("Only `mcpishcode config set publicBaseUrl <url|null>` is supported right now.");
   }
 
   const value = rest.join(" ").trim();
@@ -633,14 +624,14 @@ function runConfigCommand(args: string[]): void {
     normalizeOptionalPublicBaseUrl(value),
   );
   console.log(`Updated ${files.configPath}`);
-  console.log("Restart `devspace serve` to apply this change to a running server.");
+  console.log("Restart `mcpishcode serve` to apply this change to a running server.");
 }
 
 async function runWorktreesCommand(args: string[]): Promise<void> {
   const [subcommand, ...extra] = args;
 
   if (subcommand !== "prune" || extra.length > 0) {
-    throw new Error("Usage: devspace worktrees prune");
+    throw new Error("Usage: mcpishcode worktrees prune");
   }
 
   const cleanup = await pruneStaleManagedWorktrees(loadConfig());
@@ -676,57 +667,35 @@ async function runWorktreesCommand(args: string[]): Promise<void> {
 function printHelp(): void {
   console.log(
     [
-      "DevSpace",
+      "MCPishCode",
       "",
       "Usage:",
-      "  devspace                 Run first-time setup if needed, then start the server",
-      "  devspace serve           Start the server",
-      "  devspace init [--yes] [--providers <id,...>] [--public-url <url>] [--roots <path,...>] [--force] [--json]",
-      "                           Create or update ~/.devspace/config.jsonc and auth.json",
-      "  devspace doctor          Show config, runtime, and native dependency status",
-      "  devspace config get      Print persisted config",
-      "  devspace config set publicBaseUrl <url|null>",
-      "  devspace worktrees prune Prune managed worktrees unused for 3 days",
-      "  devspace show-changes <review-ref> [--json]",
-      "  devspace agents targets [--json]  List usable subagent providers and profiles",
-      "  devspace agents ls       List subagent sessions",
-      "  devspace agents run <profile-or-provider> [options] [--worktree [--branch <name>]] <prompt>",
-      "  devspace agents continue <id> [options] <prompt>",
-      "  devspace agents show <id> [--json]",
-      "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
-      "  devspace agents stop <id> [--json]",
-      "  devspace agents events <id> [--turn <turn-id>] [--follow] [--json]",
-      "  devspace agents skill [--install <claude-code|codex|cursor|opencode|agents> [--project]]",
-      "  devspace agents daemon <status|stop|logs>",
-      ...(workflowsEnabled() ? ["  devspace workflow <run|status|wait|calls|call|events|cancel|ls> [--json]"] : []),
-      "  devspace -v, --version   Print the installed version",
+      "  mcpishcode                 Run first-time setup if needed, then start the server",
+      "  mcpishcode serve           Start the server",
+      "  mcpishcode init [--yes] [--providers <id,...>] [--public-url <url>] [--roots <path,...>] [--force] [--json]",
+      "                           Create or update ~/.mcpishcode/config.jsonc and auth.json",
+      "  mcpishcode doctor          Show config, runtime, and native dependency status",
+      "  mcpishcode config get      Print persisted config",
+      "  mcpishcode config set publicBaseUrl <url|null>",
+      "  mcpishcode worktrees prune Prune managed worktrees unused for 3 days",
+      "  mcpishcode agents targets [--json]  List usable subagent providers and profiles",
+      "  mcpishcode agents ls       List subagent sessions",
+      "  mcpishcode agents run <profile-or-provider> [options] [--worktree [--branch <name>]] <prompt>",
+      "  mcpishcode agents continue <id> [options] <prompt>",
+      "  mcpishcode agents show <id> [--json]",
+      "  mcpishcode agents wait <id>... [--timeout <seconds>] [--json]",
+      "  mcpishcode agents stop <id> [--json]",
+      "  mcpishcode agents events <id> [--turn <turn-id>] [--follow] [--json]",
+      "  mcpishcode agents skill [--install <claude-code|codex|cursor|opencode|agents> [--project]]",
+      "  mcpishcode agents daemon <status|stop|logs>",
+      ...(workflowsEnabled() ? ["  mcpishcode workflow <run|status|wait|calls|call|events|cancel|ls> [--json]"] : []),
+      "  mcpishcode -v, --version   Print the installed version",
       "",
       "For temporary tunnels:",
-      "  devspace config set publicBaseUrl https://example.trycloudflare.com",
-      "  devspace serve",
+      "  mcpishcode config set publicBaseUrl https://example.trycloudflare.com",
+      "  mcpishcode serve",
     ].join("\n"),
   );
-}
-
-async function runShowChanges(args: string[]): Promise<void> {
-  const { args: commandArgs, json } = extractJsonOption(args);
-  const [reviewRef, ...extra] = commandArgs;
-
-  if (!reviewRef || extra.length > 0) {
-    throw new Error("Usage: devspace show-changes <review-ref> [--json]");
-  }
-
-  const config = loadConfig();
-  const scope = resolveCliWorkspaceContext(config.allowedRoots);
-  const review = await readReviewRef(scope.workspaceRoot, reviewRef);
-
-  if (json) {
-    printJson(review);
-
-    return;
-  }
-
-  console.log(review.patch || review.result);
 }
 
 async function runAgentsCommand(args: string[]): Promise<void> {
@@ -811,7 +780,7 @@ function resolveAgentCliWorkspaceContext(config: AgentConfig) {
 }
 
 async function runAgentsTargets(args: string[], json: boolean): Promise<void> {
-  if (args.length > 0) throw new Error("Usage: devspace agents targets [--json]");
+  if (args.length > 0) throw new Error("Usage: mcpishcode agents targets [--json]");
   const config = loadAgentConfig();
   const scope = resolveAgentCliWorkspaceContext(config);
   const profiles = await loadLocalAgentProfiles(config, scope.workspaceRoot);
@@ -830,7 +799,7 @@ async function runAgentsTargets(args: string[], json: boolean): Promise<void> {
 
 /** Asks each enabled provider (or the named one, enabled or not) which models it offers here. */
 async function runAgentsModels(args: string[], json: boolean): Promise<void> {
-  if (args.length > 1) throw new Error("Usage: devspace agents models [provider] [--json]");
+  if (args.length > 1) throw new Error("Usage: mcpishcode agents models [provider] [--json]");
   const [name] = args;
   const config = loadAgentConfig();
   const { workspaceRoot } = resolveAgentCliWorkspaceContext(config);
@@ -879,7 +848,7 @@ async function runAgentsModels(args: string[], json: boolean): Promise<void> {
 }
 
 async function runAgentsList(args: string[], json: boolean): Promise<void> {
-  if (args.length > 0) throw new Error("Usage: devspace agents ls [--json]");
+  if (args.length > 0) throw new Error("Usage: mcpishcode agents ls [--json]");
   const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
   const result = await client.list(resolveAgentCliWorkspaceContext(config));
@@ -973,7 +942,7 @@ async function runAgentsContinue(args: string[], json: boolean): Promise<void> {
 async function runAgentsShow(args: string[], json: boolean): Promise<void> {
   const [id, ...extra] = args;
 
-  if (!id || extra.length > 0) throw new Error("Usage: devspace agents show <id> [--json]");
+  if (!id || extra.length > 0) throw new Error("Usage: mcpishcode agents show <id> [--json]");
 
   const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
@@ -1024,7 +993,7 @@ async function waitForStartedAgent(
 async function runAgentsStop(args: string[], json: boolean): Promise<void> {
   const [id, ...extra] = args;
 
-  if (!id || extra.length > 0) throw new Error("Usage: devspace agents stop <id> [--json]");
+  if (!id || extra.length > 0) throw new Error("Usage: mcpishcode agents stop <id> [--json]");
   const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
   const scope = resolveAgentCliWorkspaceContext(config);
@@ -1082,7 +1051,7 @@ interface AgentsEventsArgs {
 }
 
 function parseAgentsEventsArgs(args: string[]): AgentsEventsArgs {
-  const usage = "Usage: devspace agents events <id> [--turn <turn-id>] [--follow] [--json]";
+  const usage = "Usage: mcpishcode agents events <id> [--turn <turn-id>] [--follow] [--json]";
   const positional: string[] = [];
   let turnId: string | undefined;
   let follow = false;
@@ -1141,14 +1110,14 @@ function parseAgentsWaitArgs(args: string[]): AgentsWaitArgs {
   }
 
   if (ids.length === 0) {
-    throw new Error("Usage: devspace agents wait <id>... [--timeout <seconds>] [--json]");
+    throw new Error("Usage: mcpishcode agents wait <id>... [--timeout <seconds>] [--json]");
   }
 
   return { ids, ...optionalFields(timeoutMs === undefined ? undefined : { timeoutMs }) };
 }
 
 function runAgentsSkill(args: string[]): void {
-  const usage = `Usage: devspace agents skill [--install <${AGENT_SKILL_INSTALL_TARGETS.join("|")}> [--project]]`;
+  const usage = `Usage: mcpishcode agents skill [--install <${AGENT_SKILL_INSTALL_TARGETS.join("|")}> [--project]]`;
   let target: string | undefined;
   let project = false;
 
@@ -1177,7 +1146,7 @@ function runAgentsSkill(args: string[]): void {
 async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
   const [subcommand, ...extra] = args;
 
-  if (extra.length > 0) throw new Error("Usage: devspace agents daemon <status|stop|logs> [--json]");
+  if (extra.length > 0) throw new Error("Usage: mcpishcode agents daemon <status|stop|logs> [--json]");
   const config = loadAgentConfig();
   const client = createLocalAgentClient(config);
 
@@ -1214,7 +1183,7 @@ async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
     }
 
     default:
-      throw new Error("Usage: devspace agents daemon <status|stop|logs>");
+      throw new Error("Usage: mcpishcode agents daemon <status|stop|logs>");
   }
 }
 
@@ -1298,20 +1267,20 @@ function printJson(value: WireInput): void {
 function printAgentsHelp(): void {
   console.log(
     [
-      "DevSpace agents",
+      "MCPishCode agents",
       "",
       "Usage:",
-      "  devspace agents ls [--json]",
-      "  devspace agents run <profile-or-provider> [options] [--worktree [--branch <name>]] [--json] <prompt>",
-      "  devspace agents continue <id> [options] [--json] <prompt>",
-      "  devspace agents show <id> [--json]",
-      "  devspace agents wait <id>... [--timeout <seconds>] [--json]",
-      "  devspace agents stop <id> [--json]",
-      "  devspace agents events <id> [--turn <turn-id>] [--follow] [--json]",
-      "  devspace agents targets [--json]",
-      "  devspace agents models [provider] [--json]",
-      "  devspace agents skill [--install <claude-code|codex|cursor|opencode|agents> [--project]]",
-      "  devspace agents daemon <status|stop|logs> [--json]",
+      "  mcpishcode agents ls [--json]",
+      "  mcpishcode agents run <profile-or-provider> [options] [--worktree [--branch <name>]] [--json] <prompt>",
+      "  mcpishcode agents continue <id> [options] [--json] <prompt>",
+      "  mcpishcode agents show <id> [--json]",
+      "  mcpishcode agents wait <id>... [--timeout <seconds>] [--json]",
+      "  mcpishcode agents stop <id> [--json]",
+      "  mcpishcode agents events <id> [--turn <turn-id>] [--follow] [--json]",
+      "  mcpishcode agents targets [--json]",
+      "  mcpishcode agents models [provider] [--json]",
+      "  mcpishcode agents skill [--install <claude-code|codex|cursor|opencode|agents> [--project]]",
+      "  mcpishcode agents daemon <status|stop|logs> [--json]",
       "",
       "Options for run and continue:",
       "  --model <model>  --effort <level>",
@@ -1327,7 +1296,7 @@ function printVersion(): void {
   const packageJson = require("../package.json") as { version?: unknown };
 
   if (!isJsonString(packageJson.version)) {
-    throw new Error("Unable to read DevSpace package version.");
+    throw new Error("Unable to read MCPishCode package version.");
   }
 
   console.log(packageJson.version);
@@ -1400,7 +1369,7 @@ function assertSupportedNode(): void {
 
   throw new Error(
     [
-      `DevSpace requires Node ${SUPPORTED_NODE_RANGE}.`,
+      `MCPishCode requires Node ${SUPPORTED_NODE_RANGE}.`,
       `Current Node: ${process.version}`,
       "",
       "Install Node 22 LTS or use a version manager such as nvm, fnm, or mise.",

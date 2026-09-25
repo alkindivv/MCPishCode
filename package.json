@@ -1,10 +1,10 @@
 {
-  "name": "@waishnav/devspace",
-  "version": "1.1.1",
-  "description": "Expose a secure local coding workspace through an MCP server.",
+  "name": "@alkindivv/mcpishcode-lean",
+  "version": "1.1.1-lean.1",
+  "description": "Text-only local coding workspaces exposed through an MCP server.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Waishnav/devspace.git"
+    "url": "git+https://github.com/alkindivv/MCPishCode.git"
   },
   "type": "module",
   "main": "dist/server.js",
@@ -13,15 +13,13 @@
   },
   "packageManager": "pnpm@11.25.0",
   "bin": {
-    "devspace": "bin/devspace.js",
-    "devspace-agentd": "bin/devspace-agentd.js"
+    "mcpishcode": "bin/mcpishcode.js",
+    "mcpishcode-agentd": "bin/mcpishcode-agentd.js"
   },
   "files": [
     "bin",
     "dist",
-    "examples",
     "schema",
-    "scripts",
     "skills",
     "README.md"
   ],
@@ -30,21 +28,17 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "pnpm clean && pnpm build:app && pnpm build:web && tsc -p tsconfig.build.json",
-    "build:app": "vite build",
-    "build:web": "vite build -c vite.web.config.ts",
+    "build": "pnpm clean && tsc -p tsconfig.build.json",
     "dev": "tsx scripts/dev.ts",
     "dev:seed": "tsx scripts/dev-state.ts seed",
     "dev:reset": "tsx scripts/dev-state.ts reset",
     "prepack": "pnpm build",
     "schema:config": "tsx scripts/generate-config-schema.ts",
     "start": "node --import ./bin/silence-sqlite-warning.js dist/cli.js serve",
-    "test": "tsx --import ./bin/silence-sqlite-warning.js --test --test-concurrency=1 \"src/**/*.test.ts\"",
-    "test:package-install": "tsx --test --test-concurrency=1 \"test/package-install-smoke.test.ts\"",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p scripts/qa/tsconfig.json && tsc -p test/agents-replay/tsconfig.json",
-    "lint": "oxlint",
-    "qa": "tsx scripts/qa/run.ts",
-    "qa:agents": "tsx test/agents-replay/conformance.ts"
+    "test": "pnpm build && node scripts/e2e-text-only.mjs",
+    "test:e2e": "pnpm test",
+    "test:package": "node scripts/e2e-package.mjs",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit"
   },
   "keywords": [],
   "author": "",
@@ -56,13 +50,11 @@
     "@clack/prompts": "^1.5.1",
     "@earendil-works/pi-codemode": "1.1.0",
     "@earendil-works/pi-coding-agent": "^0.80.10",
-    "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "@opencode-ai/sdk": "1.17.13",
     "@opencode/client": "2.0.18",
-    "@pierre/diffs": "^1.3.6",
     "ajv": "^8.20.0",
     "better-result": "^2.10.0",
     "cross-spawn": "^7.0.6",
@@ -71,26 +63,17 @@
     "express": "^5.2.1",
     "jsonc-parser": "^3.3.1",
     "koffi": "3.2.1",
-    "lucide": "^1.24.0",
     "quickjs-emscripten": "^0.32.0",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6",
     "semver": "^7.8.4",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@oxlint/plugins": "1.89.0",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.1",
-    "@types/react": "^19.2.15",
-    "@types/react-dom": "^19.2.3",
     "@types/semver": "^7.7.1",
-    "@vitejs/plugin-react": "^6.0.2",
-    "oxlint": "1.89.0",
     "tsx": "^4.22.3",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.14"
+    "typescript": "^6.0.3"
   },
   "overrides": {
     "protobufjs": "7.6.4",

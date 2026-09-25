@@ -49,7 +49,7 @@ type ValueOption = typeof VALUE_OPTIONS[number];
 export function parseLocalAgentRunArgs(args: string[]): ParsedLocalAgentRunArgs {
   return parseAgentPromptArgs(
     args,
-    'Usage: devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] [--write-mode <read_only|allowed|full_access>] [--request-id <key>] [--worktree [--branch <name>]] [--wait [--timeout <seconds>]] "<prompt>"',
+    'Usage: mcpishcode agents run <profile-or-provider> [--model <model>] [--effort <level>] [--write-mode <read_only|allowed|full_access>] [--request-id <key>] [--worktree [--branch <name>]] [--wait [--timeout <seconds>]] "<prompt>"',
     true,
   );
 }
@@ -57,7 +57,7 @@ export function parseLocalAgentRunArgs(args: string[]): ParsedLocalAgentRunArgs 
 export function parseLocalAgentContinueArgs(args: string[]): ParsedLocalAgentContinueArgs {
   const { target, requestId: _requestId, ...parsed } = parseAgentPromptArgs(
     args,
-    'Usage: devspace agents continue <id> [--model <model>] [--effort <level>] [--write-mode <read_only|allowed|full_access>] [--wait [--timeout <seconds>]] "<prompt>"',
+    'Usage: mcpishcode agents continue <id> [--model <model>] [--effort <level>] [--write-mode <read_only|allowed|full_access>] [--wait [--timeout <seconds>]] "<prompt>"',
     false,
   );
 

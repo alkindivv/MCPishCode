@@ -1,38 +1,14 @@
-import * as z from "zod/v4";
 import { logEvent, commandPreview } from "../logger.js";
 import type { ServerConfig } from "../config.js";
-import {
-  WORKSPACE_APP_URI,
-  type DiffStats,
-  type ToolContent,
-  type ToolLogFields,
-  type ToolWidgetDescriptorMeta,
-} from "./types.js";
+import type { DiffStats, ToolContent, ToolLogFields } from "./types.js";
+import * as z from "zod/v4";
 
 type ZodObjectSpec = Parameters<typeof z.object>[0];
 
+// Internal DTO contract used by Code Mode. The MCP boundary omits this schema
+// and its duplicate structured result; JavaScript workers retain typed fields.
 export function resultOutputSchema(extra: ZodObjectSpec = {}): ZodObjectSpec {
-  return {
-    result: z
-      .string()
-      .describe(
-        "Model-readable result text for follow-up reasoning and plain MCP hosts.",
-      ),
-    ...extra,
-  };
-}
-
-export function workspaceAppDescriptorMeta(config: ServerConfig): ToolWidgetDescriptorMeta {
-  if (!config.uiEnabled) return { _meta: {} };
-
-  return {
-    _meta: {
-      ui: {
-        resourceUri: WORKSPACE_APP_URI,
-        visibility: ["model"],
-      },
-    },
-  };
+  return { result: z.string(), ...extra };
 }
 
 export function logToolCall(config: ServerConfig, fields: ToolLogFields): void {

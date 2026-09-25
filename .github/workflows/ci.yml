@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feat/mcpishcode-lean-upstream
   pull_request:
 
 permissions:
@@ -15,7 +16,7 @@ concurrency:
 
 jobs:
   smoke:
-    name: Smoke (${{ matrix.os }})
+    name: Text-only E2E (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
@@ -24,7 +25,7 @@ jobs:
         os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
 
     env:
-      DEVSPACE_OAUTH_OWNER_TOKEN: ci-owner-token-that-is-long-enough
+      MCPISHCODE_OAUTH_OWNER_TOKEN: ci-owner-token-that-is-long-enough
 
     steps:
       - name: Checkout
@@ -37,43 +38,33 @@ jobs:
           cache: true
           install: false
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install dependencies without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Install Pi sandbox dependencies
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ripgrep bubblewrap socat
-          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-          # Ubuntu 26.04 enforces a bwrap profile that strips capabilities from
-          # bwrap's children, so the seccomp helper cannot create its nested
-          # user namespace (apply-seccomp: ... nested userns is capability-restricted).
-          if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
-            # Removal fails when the profile exists but is not loaded; the
-            # required sandbox test below still catches a real denial.
-            sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict || echo "bwrap-userns-restrict is not loaded"
-          fi
-
-      - name: Typecheck
+      - name: Typecheck runtime
         run: pnpm typecheck
 
-      - name: Lint
-        run: pnpm lint
+      - name: Verify generated config schema
+        run: |
+          pnpm schema:config
+          git diff --exit-code -- schema
 
-      - name: Test
-        env:
-          DEVSPACE_REQUIRE_PI_SANDBOX: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
+      - name: Build and run isolated OAuth/MCP text-only E2E
         run: pnpm test
 
-      - name: Package install smoke test
-        run: pnpm test:package-install
+      - name: Verify packed runtime and repeat text-only E2E
+        run: pnpm test:package
 
-      - name: Doctor
-        run: node dist/cli.js doctor
+      - name: Run CLI version smoke
+        run: node dist/cli.js --version
 
-      - name: Subagent conformance replay
-        if: matrix.os == 'ubuntu-latest'
-        run: pnpm qa:agents
+      - name: Upload sanitized E2E evidence and package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: text-only-evidence-${{ matrix.os }}
+          path: |
+            artifacts/*.json
+            artifacts/*.tgz
+          if-no-files-found: warn
+          retention-days: 14

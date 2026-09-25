@@ -10,7 +10,7 @@ export async function runEntrypoint(sourcePath, distPath) {
       await import("tsx/esm");
     } catch (error) {
       throw new Error(
-        "DevSpace source checkout detected, but tsx is unavailable. Run `pnpm install` in the checkout; refusing to fall back to potentially stale dist output.",
+        "MCPishCode source checkout detected, but tsx is unavailable. Run `pnpm install` in the checkout; refusing to fall back to potentially stale dist output.",
         { cause: error },
       );
     }

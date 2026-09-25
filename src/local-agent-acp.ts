@@ -735,7 +735,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
             ? new GrokPromptCompletionRegistry()
             : undefined;
 
-          const app = client({ name: "DevSpace" })
+          const app = client({ name: "MCPishCode" })
             .onRequest(methods.client.session.requestPermission, (context) => {
               const writeMode = sessionWriteModes.get(context.params.sessionId);
               const selected = selectAcpPermissionOption(context.params.options, writeMode, this.flavor);

@@ -12,7 +12,6 @@ export interface LoggingConfig {
   level: LogLevel;
   format: LogFormat;
   requests: boolean;
-  assets: boolean;
   toolCalls: boolean;
   shellCommands: boolean;
   trustProxy: TrustProxyMode;
