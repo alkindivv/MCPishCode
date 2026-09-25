@@ -523,7 +523,7 @@ export function localAgentDaemonEnvironment(
   configDir: string,
   env: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
-  return { ...env, DEVSPACE_CONFIG_DIR: configDir };
+  return { ...env, MCPISHCODE_CONFIG_DIR: configDir };
 }
 
 export function daemonExecArgv(execArgv: readonly string[]): string[] {

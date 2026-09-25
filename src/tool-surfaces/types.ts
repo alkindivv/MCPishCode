@@ -3,8 +3,6 @@ import type { ProcessSessionManager } from "../process-sessions.js";
 import type { ServerConfig } from "../config.js";
 import type { WorkspaceRegistry } from "../workspaces.js";
 
-export const WORKSPACE_APP_URI = "ui://devspace/workspace-app.html";
-
 export const toolNames = {
   openWorkspace: "open_workspace",
   read: "read",
@@ -59,21 +57,6 @@ export interface ToolLogFields {
 export interface DiffStats {
   additions: number;
   removals: number;
-}
-
-export interface ToolDefinitionMeta extends Record<string, unknown> {
-  ui: {
-    resourceUri: string;
-    visibility: ["model"];
-  };
-}
-
-export type EmptyToolDefinitionMeta = Record<string, unknown> & {
-  "ui/resourceUri"?: string;
-};
-
-export interface ToolWidgetDescriptorMeta {
-  _meta: ToolDefinitionMeta | EmptyToolDefinitionMeta;
 }
 
 export interface ToolRegistrationContext {

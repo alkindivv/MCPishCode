@@ -14,11 +14,9 @@ import {
   type ToolRegistrationContext,
 } from "./types.js";
 import {
-  contentText,
   countDiffStats,
   logFailedToolResponse,
   logToolCall,
-  resultOutputSchema,
   textBlock,
 } from "./shared.js";
 
@@ -53,7 +51,6 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
           .describe("File path to write, relative to the workspace root."),
         content: z.string().describe("Complete new file content."),
       },
-      outputSchema: resultOutputSchema(),
       annotations: WRITE_TOOL_ANNOTATIONS,
     },
     async ({ workspace_id, ...input }) => {
@@ -85,12 +82,7 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return {
-        ...response,
-        structuredContent: {
-          result: contentText(response.content),
-        },
-      };
+      return response;
     },
   );
 
@@ -118,9 +110,6 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
           )
           .min(1),
       },
-      outputSchema: resultOutputSchema({
-        status: z.literal("applied"),
-      }),
       annotations: EDIT_TOOL_ANNOTATIONS,
     },
     async ({ workspace_id, edits, ...input }) => {
@@ -164,13 +153,7 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return {
-        content: editContent,
-        structuredContent: {
-          status: "applied",
-          result: contentText(editContent),
-        },
-      };
+      return { content: editContent };
     },
   );
 }
@@ -201,7 +184,6 @@ function registerShellTool(context: ToolRegistrationContext): void {
           .optional()
           .describe("Timeout in seconds. Defaults to 30, max 300."),
       },
-      outputSchema: resultOutputSchema(),
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
     async ({ workspace_id, working_directory, ...input }) => {
@@ -243,12 +225,7 @@ function registerShellTool(context: ToolRegistrationContext): void {
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return {
-        ...response,
-        structuredContent: {
-          result: contentText(response.content),
-        },
-      };
+      return response;
     },
   );
 }

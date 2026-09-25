@@ -1,10 +1,10 @@
 {
-  "name": "@waishnav/devspace",
-  "version": "1.0.8",
-  "description": "Expose a secure local coding workspace through an MCP server.",
+  "name": "@alkindivv/mcpishcode",
+  "version": "1.1.0",
+  "description": "Local coding workspace exposed through an MCP server.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Waishnav/devspace.git"
+    "url": "git+https://github.com/alkindivv/MCPishCode.git"
   },
   "type": "module",
   "main": "dist/server.js",
@@ -13,16 +13,13 @@
   },
   "packageManager": "pnpm@11.25.0",
   "bin": {
-    "devspace": "bin/devspace.js",
-    "devspace-agentd": "bin/devspace-agentd.js"
+    "mcpishcode": "bin/mcpishcode.js"
   },
   "files": [
     "bin",
     "dist",
-    "docs",
-    "examples",
     "schema",
-    "scripts",
+    "scripts/fix-node-pty-permissions.mjs",
     "skills",
     "README.md"
   ],
@@ -31,8 +28,7 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "pnpm clean && pnpm build:app && tsc -p tsconfig.build.json",
-    "build:app": "vite build",
+    "build": "pnpm clean && tsc -p tsconfig.build.json",
     "dev": "tsx scripts/dev.ts",
     "dev:seed": "tsx scripts/dev-state.ts seed",
     "dev:reset": "tsx scripts/dev-state.ts reset",
@@ -40,9 +36,7 @@
     "prepack": "pnpm build",
     "schema:config": "tsx scripts/generate-config-schema.ts",
     "start": "node dist/cli.js serve",
-    "test": "tsx --test --test-concurrency=1 \"src/**/*.test.ts\"",
-    "test:package-install": "tsx --test --test-concurrency=1 \"test/package-install-smoke.test.ts\"",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.build.json --noEmit"
   },
   "keywords": [],
   "author": "",
@@ -53,7 +47,6 @@
     "@anthropic-ai/sandbox-runtime": "0.0.71",
     "@clack/prompts": "^1.5.1",
     "@earendil-works/pi-coding-agent": "^0.80.3",
-    "@modelcontextprotocol/ext-apps": "^1.7.2",
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@modelcontextprotocol/server": "^2.0.0",
@@ -67,9 +60,6 @@
     "express": "^5.2.1",
     "jsonc-parser": "^3.3.1",
     "koffi": "^3.1.2",
-    "lucide": "^1.24.0",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6",
     "semver": "^7.8.4",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
@@ -78,13 +68,9 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.1",
-    "@types/react": "^19.2.15",
-    "@types/react-dom": "^19.2.3",
     "@types/semver": "^7.7.1",
-    "@vitejs/plugin-react": "^6.0.2",
     "tsx": "^4.22.3",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.14"
+    "typescript": "^6.0.3"
   },
   "overrides": {
     "protobufjs": "7.6.4",

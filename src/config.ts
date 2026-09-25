@@ -17,7 +17,6 @@ export interface ServerConfig {
   allowedHosts: string[];
   publicBaseUrl: string;
   toolMode: ToolMode;
-  uiEnabled: boolean;
   stateDir: string;
   worktreeRoot: string;
   artifactsEnabled: boolean;
@@ -54,7 +53,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     port,
     oauth: {
       ownerToken: parseRequiredSecret(
-        env.DEVSPACE_OAUTH_OWNER_TOKEN ?? files.auth.ownerToken,
+        env.MCPISHCODE_OAUTH_OWNER_TOKEN ?? env.DEVSPACE_OAUTH_OWNER_TOKEN ?? files.auth.ownerToken,
       ),
       accessTokenTtlSeconds: stored.oauth.accessTokenTtlSeconds,
       refreshTokenTtlSeconds: stored.oauth.refreshTokenTtlSeconds,
@@ -66,7 +65,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     allowedHosts: normalizeAllowedHosts(derivedAllowedHosts),
     publicBaseUrl,
     toolMode: stored.tools.mode,
-    uiEnabled: stored.ui.enabled,
     stateDir: normalizePath(stored.storage.stateDir),
     worktreeRoot: normalizePath(stored.workspaces.worktreeRoot),
     artifactsEnabled: stored.artifacts.enabled,
@@ -100,7 +98,7 @@ function normalizeAllowedHosts(hosts: string[]): string[] {
 function parseRequiredSecret(value: string | undefined): string {
   const secret = value?.trim();
   if (!secret) {
-    throw new Error("OAuth owner token is required. Run: devspace init");
+    throw new Error("OAuth owner token is required. Run: mcpishcode init");
   }
   if (secret.length < 16) {
     throw new Error("OAuth owner token must be at least 16 characters long.");

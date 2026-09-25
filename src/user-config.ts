@@ -51,7 +51,9 @@ export interface DevspaceConfigEdit {
 }
 
 export function devspaceConfigDir(env: NodeJS.ProcessEnv = process.env): string {
-  return resolve(expandHomePath(env.DEVSPACE_CONFIG_DIR ?? join(homedir(), ".devspace")));
+  return resolve(expandHomePath(
+    env.MCPISHCODE_CONFIG_DIR ?? env.DEVSPACE_CONFIG_DIR ?? join(homedir(), ".mcpishcode"),
+  ));
 }
 
 export function devspaceConfigPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -160,7 +162,7 @@ function migrateLegacyConfigFile(
   if (existsSync(backupPath)) {
     throw new Error(
       `Unable to migrate ${legacyPath}: backup already exists at ${backupPath}. `
-      + `Move ${backupPath} out of the way, then run DevSpace again.`,
+      + `Move ${backupPath} out of the way, then run MCPishCode again.`,
     );
   }
 

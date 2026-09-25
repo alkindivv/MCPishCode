@@ -419,7 +419,7 @@ export class LocalAgentStore {
     return rows.map(rowToLocalAgentTurnRecord);
   }
 
-  reconcileActiveRuns(message = "DevSpace restarted while this agent turn was running."): number {
+  reconcileActiveRuns(message = "MCPishCode restarted while this agent turn was running."): number {
     return this.database.sqlite.transaction(() => {
       const now = new Date().toISOString();
       this.database.sqlite
@@ -442,7 +442,7 @@ export class LocalAgentStore {
   }
 
   reconcileActiveRunsResult(
-    message = "DevSpace restarted while this agent turn was running.",
+    message = "MCPishCode restarted while this agent turn was running.",
   ): BetterResult<number, AgentStoreError> {
     return storeResult("reconcile_active_runs", () => this.reconcileActiveRuns(message));
   }

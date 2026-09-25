@@ -492,7 +492,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
           const grokCompletionRegistry = this.provider === "grok"
             ? new GrokPromptCompletionRegistry()
             : undefined;
-          const app = client({ name: "DevSpace" })
+          const app = client({ name: "MCPishCode" })
             .onRequest(methods.client.session.requestPermission, (context) => {
               const writeMode = sessionWriteModes.get(context.params.sessionId);
               const selected = selectAcpPermissionOption(context.params.options, writeMode, this.provider);
@@ -525,7 +525,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
           const init = await withTimeout(Promise.race([
             connection.agent.request(methods.agent.initialize, {
               protocolVersion: 1,
-              clientInfo: { name: "DevSpace", version: DEVSPACE_VERSION },
+              clientInfo: { name: "MCPishCode", version: DEVSPACE_VERSION },
               clientCapabilities: {},
             }),
             startupError.then((error) => { throw error; }),

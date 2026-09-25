@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { access, realpath } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
@@ -9,11 +9,6 @@ import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middlew
 import { resourceUrlFromServerUrl } from "@modelcontextprotocol/sdk/shared/auth-utils.js";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
-import {
-  registerAppResource,
-  registerAppTool,
-  RESOURCE_MIME_TYPE,
-} from "@modelcontextprotocol/ext-apps/server";
 import express from "express";
 import type { Request, Response } from "express";
 import * as z from "zod/v4";
@@ -40,7 +35,6 @@ import {
   type McpRegistrationTarget,
 } from "./mcp-modern-server.js";
 import { ProcessSessionManager } from "./process-sessions.js";
-import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { conversationScopeIdFromRequestMeta } from "./request-meta.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
 import { formatPathForPrompt } from "./skills.js";
@@ -58,30 +52,24 @@ import {
 } from "./local-agent-catalog.js";
 import { getToolSurface } from "./tool-surfaces/index.js";
 import {
-  contentText,
   logFailedToolResponse,
   logToolCall,
-  resultOutputSchema,
   textBlock,
-  workspaceAppDescriptorMeta,
 } from "./tool-surfaces/shared.js";
 import {
-  WORKSPACE_APP_URI,
   toolNames,
   workspaceIdDescription,
   type ToolContent,
   type ToolSurface,
 } from "./tool-surfaces/types.js";
 
-const WORKSPACE_APP_MANIFEST_ENTRY = "workspace-app.html";
-
 function mcpServerInfo() {
   return {
-    name: "devspace",
-    title: "DevSpace",
+    name: "mcpishcode",
+    title: "MCPishCode",
     version: DEVSPACE_VERSION,
     description:
-      "Coding tools for project workspaces. Open each project or worktree once, then reuse its workspace_id.",
+      "Coding tools for approved project workspaces. Open each project or worktree once, then reuse its workspace_id.",
   };
 }
 
@@ -112,14 +100,6 @@ class ToolActivityTracker {
   }
 }
 
-interface WorkspaceAppManifestEntry {
-  file: string;
-  css?: string[];
-  isEntry?: boolean;
-}
-
-type WorkspaceAppManifest = Record<string, WorkspaceAppManifestEntry>;
-
 function serverInstructions(
   config: ServerConfig,
   toolSurface: ToolSurface,
@@ -128,15 +108,13 @@ function serverInstructions(
     config.artifactsEnabled && isArtifactDownloadSupportedPlatform()
       ? " When the user provides an attached or generated file that needs to be added to the workspace, pass the provided file directly to download_artifact with the existing workspace_id and a suitable relative destination path. Do not reconstruct attached files manually."
       : "";
-  const showChangesInstruction =
-    " If files are modified, call show_changes once after the final related change and before the final response.";
   const skills = config.skillsEnabled
     ? `When ${toolNames.openWorkspace} returns available skills and a task matches one, use ${toolNames.read} with the returned skill path before proceeding. `
     : "";
   const agents = `Follow instructions returned by ${toolNames.openWorkspace}. Before working under a path listed in available_agents_files, use ${toolNames.read} to inspect that instruction file and follow it. `;
   const common = `Call ${toolNames.openWorkspace} when starting work in a project folder or isolated worktree without a usable workspace_id, then reuse the returned workspace_id for subsequent operations in that workspace.`;
 
-  return `${common} ${toolSurface.instructions({ agents, skills })}${artifactInstruction}${showChangesInstruction}`;
+  return `${common} ${toolSurface.instructions({ agents, skills })}${artifactInstruction}`;
 }
 
 function formatVisibleAgent(agent: {
@@ -164,36 +142,6 @@ function formatAvailableAgentProvider(provider: {
   return `${provider.id}${details ? ` (${details})` : ""}`;
 }
 
-const workspaceSkillOutputSchema = z.object({
-  name: z.string(),
-  description: z.string(),
-  path: z.string(),
-});
-
-const workspaceAgentsFileOutputSchema = z.object({
-  path: z.string(),
-  content: z.string(),
-});
-
-const workspaceLocalAgentOutputSchema = z.object({
-  name: z.string(),
-  description: z.string(),
-  provider: z.string(),
-  model: z.string().optional(),
-  effort: z.string().optional(),
-});
-
-const workspaceLocalAgentProviderOutputSchema = z.object({
-  id: z.string(),
-  model: z.string().optional(),
-  effort: z.string().optional(),
-  note: z.string().optional(),
-});
-
-const workspaceAvailableAgentsFileOutputSchema = z.object({
-  path: z.string(),
-});
-
 function sendJsonRpcError(
   res: Response,
   status: number,
@@ -218,97 +166,9 @@ function requestLogFields(req: Request, config: ServerConfig): Record<string, un
   };
 }
 
-function assetBaseUrl(config: ServerConfig): string {
-  return `${config.publicBaseUrl.replace(/\/+$/, "")}/mcp-app-assets`;
-}
-
-function uiManifestUrl(): URL {
-  return new URL("../dist/ui/.vite/manifest.json", import.meta.url);
-}
-
-function readWorkspaceAppManifest(): WorkspaceAppManifest {
-  return JSON.parse(readFileSync(uiManifestUrl(), "utf8")) as WorkspaceAppManifest;
-}
-
-function getWorkspaceAppManifestEntry(): WorkspaceAppManifestEntry {
-  const manifest = readWorkspaceAppManifest();
-  const entry = manifest[WORKSPACE_APP_MANIFEST_ENTRY];
-
-  if (!entry?.file) {
-    throw new Error(`Missing ${WORKSPACE_APP_MANIFEST_ENTRY} in UI manifest.`);
-  }
-
-  return entry;
-}
-
-function assetUrl(baseUrl: string, assetPath: string): string {
-  return `${baseUrl}/${assetPath.replace(/^\/+/, "")}`;
-}
-
-function workspaceAppHtml(config: ServerConfig): string {
-  const baseUrl = assetBaseUrl(config);
-  const entry = getWorkspaceAppManifestEntry();
-  const stylesheets = (entry.css ?? [])
-    .map(
-      (stylesheet) =>
-        `    <link rel="stylesheet" crossorigin href="${assetUrl(baseUrl, stylesheet)}" />`,
-    )
-    .join("\n");
-
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DevSpace Workspace</title>
-    <script type="module" crossorigin src="${assetUrl(baseUrl, entry.file)}"></script>
-${stylesheets}
-  </head>
-  <body>
-    <main id="app" class="shell">
-      <section class="empty">Waiting for a tool result.</section>
-    </main>
-  </body>
-</html>`;
-}
-
-function appCsp(config: ServerConfig): {
-  resourceDomains: string[];
-  connectDomains: string[];
-} {
-  const publicBaseUrl = config.publicBaseUrl.replace(/\/+$/, "");
-  return {
-    resourceDomains: [publicBaseUrl],
-    connectDomains: [publicBaseUrl],
-  };
-}
-
-function uiBuildDirectory(): string {
-  return fileURLToPath(new URL("../dist/ui", import.meta.url));
-}
-
-function setAssetHeaders(res: Response): void {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
-  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-}
-
-async function assertWorkspaceAppAssets(): Promise<void> {
-  const entry = getWorkspaceAppManifestEntry();
-  const candidates = [entry.file, ...(entry.css ?? [])].map(
-    (assetPath) => new URL(`../dist/ui/${assetPath}`, import.meta.url),
-  );
-
-  for (const candidate of candidates) {
-    await access(candidate);
-  }
-}
-
 export function createMcpServer(
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
-  reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   processSessions: ProcessSessionManager,
   resolveLocalAgentProviders: () => LocalAgentProviderStatus[],
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
@@ -326,7 +186,6 @@ export function createMcpServer(
     server,
     config,
     workspaces,
-    reviewCheckpoints,
     processSessions,
     resolveLocalAgentProviders,
     incomingArtifactAdapters,
@@ -339,7 +198,6 @@ function registerMcpSurface(
   server: McpRegistrationTarget,
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
-  reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   processSessions: ProcessSessionManager,
   resolveLocalAgentProviders: () => LocalAgentProviderStatus[],
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
@@ -350,39 +208,7 @@ function registerMcpSurface(
     : server;
   const toolSurface = getToolSurface(config.toolMode);
 
-  registerAppResource(
-    registrationTarget,
-    "DevSpace Diff Card",
-    WORKSPACE_APP_URI,
-    {
-      description: "Interactive card for viewing DevSpace file diffs.",
-      _meta: {
-        ui: {
-          csp: appCsp(config),
-        },
-      },
-    },
-    async () => {
-      await assertWorkspaceAppAssets();
-      return {
-        contents: [
-          {
-            uri: WORKSPACE_APP_URI,
-            mimeType: RESOURCE_MIME_TYPE,
-            text: workspaceAppHtml(config),
-            _meta: {
-              ui: {
-                csp: appCsp(config),
-              },
-            },
-          },
-        ],
-      };
-    },
-  );
-
-  registerAppTool(
-    registrationTarget,
+  registrationTarget.registerTool(
     "open_workspace",
     {
       title: "Open workspace",
@@ -405,37 +231,6 @@ function registerMcpSurface(
           .optional()
           .describe("Git ref to base a worktree on. Only used with mode=\"worktree\". Defaults to HEAD."),
       },
-      outputSchema: {
-        workspace_id: z.string(),
-        root: z.string(),
-        mode: z.enum(["checkout", "worktree"]),
-        source_root: z.string().optional(),
-        worktree: z
-          .object({
-            path: z.string(),
-            base_ref: z.string(),
-            base_sha: z.string(),
-            dirty_source: z.boolean(),
-            detached: z.boolean(),
-            managed: z.boolean(),
-          })
-          .optional(),
-        agents_files: z.array(workspaceAgentsFileOutputSchema).optional(),
-        available_agents_files: z.array(workspaceAvailableAgentsFileOutputSchema).optional(),
-        skills: z.array(workspaceSkillOutputSchema).optional(),
-        agent_providers: z.array(workspaceLocalAgentProviderOutputSchema).optional(),
-        agents: z.array(workspaceLocalAgentOutputSchema).optional(),
-        skill_diagnostics: z.array(z.unknown()).optional(),
-        review: z.discriminatedUnion("available", [
-          z.object({ available: z.literal(true) }),
-          z.object({
-            available: z.literal(false),
-            reason: z.string(),
-          }),
-        ]),
-        instruction: z.string(),
-      },
-      ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
     },
     async ({ path, mode, base_ref }, { _meta }) => {
@@ -451,10 +246,6 @@ function registerMcpSurface(
         { path, mode, baseRef },
         { conversationScopeId: conversationScopeIdFromRequestMeta(_meta) },
       );
-      const review = await reviewCheckpoints.initializeWorkspace({
-        workspaceId: workspace.id,
-        root: workspace.root,
-      });
       const preloadSubagents = config.subagents.enabled
         && config.subagents.instructions === "preload";
       const subagentsSkill = workspace.skills.find((skill) => skill.name === "subagents");
@@ -552,64 +343,7 @@ function registerMcpSurface(
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return {
-        content: resultContent,
-        _meta: {
-          card: {
-            workspaceId: workspace.id,
-            root: workspace.root,
-            path: workspace.root,
-            mode: workspace.mode,
-            workspaceReused,
-            includeBootstrapContext,
-            sourceRoot: workspace.sourceRoot,
-            worktree: workspace.worktree,
-            agentsFiles: cardAgentsFiles,
-            availableAgentsFiles: cardAvailableAgentsFiles,
-            skills: cardSkills,
-            agentProviders: cardAgentProviders,
-            agents: cardAgents,
-            review,
-            instruction: cardInstruction,
-            summary: {
-              mode: workspace.mode,
-              agentsFiles: cardAgentsFiles.length,
-              availableAgentsFiles: cardAvailableAgentsFiles.length,
-              skills: cardSkills.length,
-              agentProviders: cardAgentProviders.length,
-              agents: cardAgents.length,
-            },
-          },
-        },
-        structuredContent: {
-          workspace_id: workspace.id,
-          root: workspace.root,
-          mode: workspace.mode,
-          source_root: workspace.sourceRoot,
-          worktree: workspace.worktree
-            ? {
-                path: workspace.worktree.path,
-                base_ref: workspace.worktree.baseRef,
-                base_sha: workspace.worktree.baseSha,
-                dirty_source: workspace.worktree.dirtySource,
-                detached: workspace.worktree.detached,
-                managed: workspace.worktree.managed,
-              }
-            : undefined,
-          review,
-          ...(includeBootstrapContext
-            ? {
-                agents_files: loadedAgentsFiles,
-                available_agents_files: availableAgentsFileOutputs,
-                skills: visibleSkills,
-                agent_providers: visibleAgentProviders,
-                agents: visibleAgents,
-                skill_diagnostics: workspace.skillDiagnostics,
-              }
-            : {}),
-          instruction,
-        },
-      };
+      return { content: resultContent };
     },
   );
 
@@ -651,7 +385,6 @@ function registerMcpSurface(
           .optional()
           .describe("Maximum number of lines to read."),
       },
-      outputSchema: resultOutputSchema(),
       annotations: { readOnlyHint: true },
     },
     async ({ workspace_id, ...input }) => {
@@ -681,12 +414,7 @@ function registerMcpSurface(
         durationMs: Math.round(performance.now() - startedAt),
       });
 
-      return {
-        ...response,
-        structuredContent: {
-          result: contentText(response.content),
-        },
-      };
+      return response;
     },
   );
 
@@ -696,71 +424,6 @@ function registerMcpSurface(
     workspaces,
     processSessions,
   });
-
-  registerAppTool(
-    registrationTarget,
-    "show_changes",
-    {
-      title: "Show changes",
-      description:
-        "Show the changes made in this turn for an open workspace. Call this once after the final related file change and before your final response so the user can review the combined diff. Do not call it after each individual file change.",
-      inputSchema: {
-        workspace_id: z.string().describe(workspaceIdDescription),
-      },
-      outputSchema: resultOutputSchema({
-        workspace_id: z.string(),
-        review_ref: z.string().regex(/^[0-9a-f]{40,64}$/),
-      }),
-      ...workspaceAppDescriptorMeta(config),
-      annotations: { readOnlyHint: true },
-    },
-    async ({ workspace_id }, { _meta }) => {
-      const startedAt = performance.now();
-      const workspaceId = workspace_id;
-      const workspace = await workspaces.getWorkspace(workspaceId);
-      const reviewRef = typeof _meta?.["devspace/reviewRef"] === "string"
-        ? _meta["devspace/reviewRef"]
-        : undefined;
-      const review = reviewRef
-        ? await reviewCheckpoints.reviewByRef({
-            workspaceId,
-            root: workspace.root,
-            reviewRef,
-          })
-        : await reviewCheckpoints.reviewChanges({
-            workspaceId,
-            root: workspace.root,
-            markReviewed: true,
-          });
-
-      const content = [textBlock(review.result)];
-      logToolCall(config, {
-        tool: "show_changes",
-        workspaceId,
-        success: true,
-        durationMs: Math.round(performance.now() - startedAt),
-      });
-
-      return {
-        content,
-        _meta: {
-          card: {
-            workspaceId,
-            summary: review.summary,
-            files: review.files,
-            payload: {
-              patch: review.patch,
-            },
-          },
-        },
-        structuredContent: {
-          workspace_id: workspaceId,
-          review_ref: review.reviewRef,
-          result: contentText(content),
-        },
-      };
-    },
-  );
 
   if (config.artifactsEnabled && isArtifactDownloadSupportedPlatform()) {
     registerArtifactTools(registrationTarget, {
@@ -811,12 +474,11 @@ export function createServer(
   const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl, config.stateDir);
   const bearerAuth = requireBearerAuth({
     verifier: oauthProvider,
-    requiredScopes: [config.oauth.scopes[0] ?? "devspace"],
+    requiredScopes: [config.oauth.scopes[0] ?? "mcpishcode"],
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
   });
   const workspaceStore = createWorkspaceStore(config.stateDir);
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
-  const reviewCheckpoints = createReviewCheckpointManager();
   const processSessions = new ProcessSessionManager();
   const toolActivities = new ToolActivityTracker();
   const localAgentProviders = buildLocalAgentProviderStatuses(
@@ -833,7 +495,6 @@ export function createServer(
       target,
       config,
       workspaces,
-      reviewCheckpoints,
       processSessions,
       resolveLocalAgentProviders,
       incomingArtifactAdapters,
@@ -873,7 +534,6 @@ export function createServer(
     res.on("finish", () => {
       const path = requestPath(req);
       if (!config.logging.requests) return;
-      if (!config.logging.assets && path.startsWith("/mcp-app-assets")) return;
 
       logEvent(config.logging, "info", "http_request", {
         requestId,
@@ -895,27 +555,12 @@ export function createServer(
       baseUrl: new URL(config.publicBaseUrl),
       resourceServerUrl,
       scopesSupported: config.oauth.scopes,
-      resourceName: "DevSpace",
-    }),
-  );
-
-  app.options("/mcp-app-assets/{*asset}", (_req, res) => {
-    setAssetHeaders(res);
-    res.sendStatus(204);
-  });
-
-  app.use(
-    "/mcp-app-assets",
-    express.static(uiBuildDirectory(), {
-      immutable: true,
-      maxAge: "1y",
-      fallthrough: false,
-      setHeaders: setAssetHeaders,
+      resourceName: "MCPishCode",
     }),
   );
 
   app.get("/healthz", (_req, res) => {
-    res.json({ ok: true, name: "devspace" });
+    res.json({ ok: true, name: "mcpishcode" });
   });
 
   app.all("/mcp", async (req, res) => {
@@ -995,13 +640,12 @@ if (await isMainModule()) {
   const { app, config, close, localAgentProviders } = createServer();
   const httpServer = app.listen(config.port, config.host, () => {
     console.log(
-      `devspace listening on http://${config.host}:${config.port}/mcp`,
+      `mcpishcode listening on http://${config.host}:${config.port}/mcp`,
     );
     console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log("auth: oauth owner-token flow required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
-    console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);
     console.log(`trust proxy: ${config.logging.trustProxy ? "enabled" : "disabled"}`);
     const artifactDownloadStatus = !config.artifactsEnabled
       ? "disabled"
@@ -1021,7 +665,7 @@ if (await isMainModule()) {
   };
   const handleShutdown = () => {
     void shutdown().catch((error) => {
-      console.error("devspace shutdown failed", error);
+      console.error("mcpishcode shutdown failed", error);
       process.exit(1);
     });
   };

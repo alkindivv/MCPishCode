@@ -6,7 +6,6 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { isAbsolute, join, normalize, sep } from "node:path";
-import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import {
@@ -89,8 +88,7 @@ export function registerArtifactTools(
 ): void {
   const incomingRegistry = new IncomingArtifactAdapterRegistry(incomingArtifactAdapters);
 
-  registerAppTool(
-    server,
+  server.registerTool(
     "download_artifact",
     {
       title: "Download attached or generated file",
@@ -106,9 +104,6 @@ export function registerArtifactTools(
         path: z.string().min(1).describe(
           "Relative destination path inside the selected workspace. The destination must not already exist.",
         ),
-      },
-      outputSchema: {
-        path: z.string(),
       },
       _meta: { "openai/fileParams": ["file"] },
       annotations: ARTIFACT_WRITE_ANNOTATIONS,
@@ -312,10 +307,7 @@ async function executeArtifactTool(
 }
 
 function artifactToolResponse(result: { path: string }) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(result) }],
-    structuredContent: result,
-  };
+  return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
 }
 
 async function openDirectoryNoFollow(

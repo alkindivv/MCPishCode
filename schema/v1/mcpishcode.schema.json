@@ -1,12 +1,12 @@
 {
-  "$id": "https://raw.githubusercontent.com/Waishnav/devspace/main/schema/v1/devspace.schema.json",
-  "title": "DevSpace configuration",
-  "description": "Versioned configuration for a local DevSpace MCP server.",
+  "$id": "https://raw.githubusercontent.com/alkindivv/MCPishCode/main/schema/v1/mcpishcode.schema.json",
+  "title": "MCPishCode configuration",
+  "description": "Versioned configuration for a local MCPishCode MCP server.",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "$schema": {
-      "default": "https://raw.githubusercontent.com/Waishnav/devspace/main/schema/v1/devspace.schema.json",
+      "default": "https://raw.githubusercontent.com/alkindivv/MCPishCode/main/schema/v1/mcpishcode.schema.json",
       "type": "string",
       "format": "uri"
     },
@@ -69,7 +69,7 @@
           }
         },
         "worktreeRoot": {
-          "default": "~/.devspace/worktrees",
+          "default": "~/.mcpishcode/worktrees",
           "type": "string",
           "minLength": 1
         }
@@ -81,7 +81,7 @@
       "type": "object",
       "properties": {
         "stateDir": {
-          "default": "~/.local/share/devspace",
+          "default": "~/.local/share/mcpishcode",
           "type": "string",
           "minLength": 1
         }
@@ -99,17 +99,6 @@
             "claude",
             "codex"
           ]
-        }
-      },
-      "additionalProperties": false
-    },
-    "ui": {
-      "default": {},
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -299,10 +288,6 @@
           "default": true,
           "type": "boolean"
         },
-        "assets": {
-          "default": false,
-          "type": "boolean"
-        },
         "toolCalls": {
           "default": true,
           "type": "boolean"
@@ -332,7 +317,7 @@
         },
         "scopes": {
           "default": [
-            "devspace"
+            "mcpishcode"
           ],
           "minItems": 1,
           "type": "array",

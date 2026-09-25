@@ -3,7 +3,7 @@ import { subagentsConfigSchema } from "./local-agent-config.js";
 
 export const DEVSPACE_CONFIG_VERSION = 1 as const;
 export const DEVSPACE_CONFIG_SCHEMA_URL =
-  "https://raw.githubusercontent.com/Waishnav/devspace/main/schema/v1/devspace.schema.json";
+  "https://raw.githubusercontent.com/alkindivv/MCPishCode/main/schema/v1/mcpishcode.schema.json";
 
 const serverConfigSchema = z.object({
   host: z.string().trim().min(1).default("127.0.0.1"),
@@ -15,19 +15,15 @@ const serverConfigSchema = z.object({
 
 const workspacesConfigSchema = z.object({
   allowedRoots: z.array(z.string().trim().min(1)).default([]),
-  worktreeRoot: z.string().trim().min(1).default("~/.devspace/worktrees"),
+  worktreeRoot: z.string().trim().min(1).default("~/.mcpishcode/worktrees"),
 }).strict().prefault({});
 
 const storageConfigSchema = z.object({
-  stateDir: z.string().trim().min(1).default("~/.local/share/devspace"),
+  stateDir: z.string().trim().min(1).default("~/.local/share/mcpishcode"),
 }).strict().prefault({});
 
 const toolsConfigSchema = z.object({
   mode: z.enum(["claude", "codex"]).default("codex"),
-}).strict().prefault({});
-
-const uiConfigSchema = z.object({
-  enabled: z.boolean().default(true),
 }).strict().prefault({});
 
 const artifactsConfigSchema = z.object({
@@ -45,7 +41,6 @@ const loggingConfigSchema = z.object({
   level: z.enum(["silent", "error", "warn", "info", "debug"]).default("info"),
   format: z.enum(["json", "pretty"]).default("json"),
   requests: z.boolean().default(true),
-  assets: z.boolean().default(false),
   toolCalls: z.boolean().default(true),
   shellCommands: z.boolean().default(false),
 }).strict().prefault({});
@@ -53,7 +48,7 @@ const loggingConfigSchema = z.object({
 const oauthConfigSchema = z.object({
   accessTokenTtlSeconds: z.number().int().positive().default(60 * 60),
   refreshTokenTtlSeconds: z.number().int().positive().default(30 * 24 * 60 * 60),
-  scopes: z.array(z.string().trim().min(1)).min(1).default(["devspace"]),
+  scopes: z.array(z.string().trim().min(1)).min(1).default(["mcpishcode"]),
   allowedResourceUrls: z.array(z.string().trim().url().refine((value) => {
     const url = URL.parse(value);
     return url !== null && (url.protocol === "https:"
@@ -75,7 +70,6 @@ export const devspaceConfigSchema = z.object({
   workspaces: workspacesConfigSchema,
   storage: storageConfigSchema,
   tools: toolsConfigSchema,
-  ui: uiConfigSchema,
   artifacts: artifactsConfigSchema,
   skills: skillsConfigSchema,
   subagents: subagentsConfigSchema.default({
@@ -98,8 +92,8 @@ export function defaultDevspaceConfig(): DevspaceConfig {
 export function devspaceConfigJsonSchema(): object {
   return {
     $id: DEVSPACE_CONFIG_SCHEMA_URL,
-    title: "DevSpace configuration",
-    description: "Versioned configuration for a local DevSpace MCP server.",
+    title: "MCPishCode configuration",
+    description: "Versioned configuration for a local MCPishCode MCP server.",
     ...z.toJSONSchema(devspaceConfigSchema, {
       target: "draft-2020-12",
       io: "input",

@@ -13,8 +13,6 @@ import {
   type ToolRegistrationContext,
 } from "./types.js";
 import {
-  contentText,
-  resultOutputSchema,
   runLoggedToolOperation,
   textBlock,
 } from "./shared.js";
@@ -49,32 +47,10 @@ function processResult(snapshot: ProcessSnapshot): string {
     : status;
 }
 
-function processOutputSchema(): z.ZodRawShape {
-  return resultOutputSchema({
-    session_id: z.number().optional(),
-    running: z.boolean(),
-    exit_code: z.number().int().optional(),
-    signal: z.string().optional(),
-    wall_time_ms: z.number().nonnegative(),
-    output_truncated: z.boolean(),
-  });
-}
-
 function processToolResponse(snapshot: ProcessSnapshot) {
   const result = processResult(snapshot);
   const content = [textBlock(result)];
-  return {
-    content,
-    structuredContent: {
-      result,
-      session_id: snapshot.sessionId,
-      running: snapshot.running,
-      exit_code: snapshot.exitCode,
-      signal: snapshot.signal,
-      wall_time_ms: snapshot.wallTimeMs,
-      output_truncated: snapshot.outputTruncated,
-    },
-  };
+  return { content };
 }
 
 function registerApplyPatchTool(context: ToolRegistrationContext): void {
@@ -94,17 +70,6 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
             "Patch text enclosed by *** Begin Patch and *** End Patch markers.",
           ),
       },
-      outputSchema: resultOutputSchema({
-        additions: z.number(),
-        removals: z.number(),
-        files: z.array(
-          z.object({
-            path: z.string(),
-            previous_path: z.string().optional(),
-            operation: z.enum(["add", "update", "delete", "move"]),
-          }),
-        ),
-      }),
       annotations: EDIT_TOOL_ANNOTATIONS,
     },
     async ({ workspace_id, patch }) => {
@@ -123,18 +88,7 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
       const result = `Applied patch to ${applied.files.length} file(s): ${paths}`;
       const content = [textBlock(result)];
 
-      return {
-        content,
-        structuredContent: {
-          result,
-          additions: applied.additions,
-          removals: applied.removals,
-          files: applied.files.map(({ previousPath, ...file }) => ({
-            ...file,
-            previous_path: previousPath,
-          })),
-        },
-      };
+      return { content };
     },
   );
 }
@@ -194,7 +148,6 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .optional()
           .describe("Approximate output token budget. Defaults to 10000."),
       },
-      outputSchema: processOutputSchema(),
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
     async ({
@@ -297,7 +250,6 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .optional()
           .describe("Approximate output token budget. Defaults to 10000."),
       },
-      outputSchema: processOutputSchema(),
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
     async ({

@@ -68,7 +68,6 @@ export function migrateLegacyConfig(value: unknown): DevspaceConfig {
     }),
     storage: definedEntries({ stateDir: legacy.stateDir }),
     tools: definedEntries({ mode: legacy.tools?.mode ?? legacy.tool_mode }),
-    ui: definedEntries({ enabled: legacy.ui?.enabled }),
     artifacts: definedEntries({
       enabled: legacy.artifactsEnabled,
       maxFileBytes: legacy.artifactMaxFileBytes,
