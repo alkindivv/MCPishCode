@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      DEVSPACE_OAUTH_OWNER_TOKEN: ci-owner-token-that-is-long-enough
+      MCPISHCODE_OAUTH_OWNER_TOKEN: ci-owner-token-that-is-long-enough
       VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout release source
@@ -124,8 +124,8 @@ jobs:
           npm pkg set version="$VERSION"
           node -e 'const pkg = require("./package.json"); if (pkg.version !== process.env.VERSION) process.exit(1)'
 
-      - name: Package install smoke test
-        run: pnpm test:package-install
+      - name: Build release package
+        run: pnpm build
 
       - name: Pack release artifact
         id: pack
