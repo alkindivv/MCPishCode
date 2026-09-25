@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feat/mcpishcode-lean-upstream
   pull_request:
 
 permissions:
