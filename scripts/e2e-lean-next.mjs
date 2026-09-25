@@ -258,7 +258,7 @@ const legacyTools = await rpc(token, "tools/list", {}, legacyProtocolVersion);
 
 const toolList = modernTools.result?.tools ?? [];
 const toolNames = toolList.map((tool) => tool.name).sort();
-for (const required of ["open_workspace", "read", "apply_patch", "exec_command", "write_stdin"]) {
+for (const required of ["open_workspace", "read", "apply_patch", "exec_command", "write_stdin", "download_artifact"]) {
   if (!toolNames.includes(required)) fail(`tools/list missing ${required}: ${toolNames.join(", ")}`);
 }
 if (toolNames.includes("show_changes")) fail("tools/list still exposes show_changes");
@@ -297,6 +297,30 @@ if (expectedPersistedWorkspaceId) {
     fail("persisted candidate workspace read did not return probe content");
   }
 }
+const rejectedArtifactPath = "blocked-e2e.bin";
+await rm(join(probeWorkspace, rejectedArtifactPath), { force: true });
+const rejectedArtifact = await rpc(token, "tools/call", {
+  name: "download_artifact",
+  arguments: {
+    workspace_id: workspaceId,
+    path: rejectedArtifactPath,
+    file: {
+      download_url: "https://example.invalid/mcpishcode-e2e.bin",
+      file_id: "file-mcpishcode-e2e",
+    },
+  },
+});
+const rejectedArtifactShape = assertTextOnly(rejectedArtifact.result, "download_artifact rejection");
+if (!rejectedArtifact.result?.isError || !contentText(rejectedArtifact.result).includes("trusted file host")) {
+  fail(`download_artifact did not reject the untrusted URL: ${contentText(rejectedArtifact.result)}`);
+}
+try {
+  await readFile(join(probeWorkspace, rejectedArtifactPath));
+  fail("download_artifact wrote a file after rejecting the untrusted URL");
+} catch (error) {
+  if (error?.code !== "ENOENT") throw error;
+}
+
 const read = await rpc(token, "tools/call", {
   name: "read",
   arguments: { workspace_id: workspaceId, path: "candidate-e2e.txt" },
@@ -398,6 +422,7 @@ const artifact = {
     workspaceId,
     openedWorkspaceIdFormat: workspaceId.startsWith("ws_") ? "ws_" : "unexpected",
     openWorkspace: openShape,
+    downloadArtifactRejected: rejectedArtifactShape,
     persistedRead: persistedReadShape,
     read: readShape,
     applyPatch: appliedPatchShape,
