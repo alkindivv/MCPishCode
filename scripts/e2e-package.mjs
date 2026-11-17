@@ -47,7 +47,7 @@ try {
   report.checks.packagedCliVersion = true;
   report.cliVersion = version;
   const runtimeArtifact = join(dirname(output), 'packaged-http-e2e.json');
-  run(process.execPath, [join(root, 'scripts/e2e-text-only.mjs')], { env: { ...process.env, E2E_MODULE_ROOT: unpacked, E2E_ARTIFACT_PATH: runtimeArtifact } });
+  run(process.execPath, [join(root, 'scripts/e2e-text-only.mjs')], { env: { ...process.env, E2E_MODULE_ROOT: unpacked, E2E_ARCHIVE: artifactTarball, E2E_ARTIFACT_PATH: runtimeArtifact } });
   report.results = JSON.parse(readFileSync(runtimeArtifact, 'utf8'));
   report.checks.packagedOAuthMcpE2e = true;
   report.status = 'passed';
